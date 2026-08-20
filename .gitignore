@@ -1,0 +1,22 @@
+# Build outputs
+/bin/
+/dist/
+*.exe
+
+# Runtime state and logs
+/state/
+*.db
+*.db-shm
+*.db-wal
+audit.jsonl
+
+# Local configuration and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

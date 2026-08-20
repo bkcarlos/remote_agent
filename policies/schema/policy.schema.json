@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://secure-remote-agent.invalid/schema/policy-v1.json",
+  "title": "Secure Remote Agent restrictive policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {"type": "string", "minLength": 1},
+    "allow_write": {"type": "boolean"},
+    "max_read_bytes": {"type": "integer", "minimum": 1},
+    "max_write_bytes": {"type": "integer", "minimum": 1},
+    "denied_names": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$"},
+      "uniqueItems": true
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "version": "1",
+  "allow_write": false,
+  "max_read_bytes": 1048576,
+  "max_write_bytes": 1048576,
+  "denied_names": [
+    ".env",
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    "id_rsa",
+    "id_ed25519"
+  ]
+}
