@@ -67,8 +67,15 @@ func TestInfoGlobAndGrep(t *testing.T) {
 		t.Fatalf("glob %v: %v", paths, err)
 	}
 	matches, err := f.Grep("src", "needle", 10, 10, 1024)
-	if err != nil || len(matches) != 2 || matches[0].Line != 2 {
+	if err != nil || len(matches) != 2 {
 		t.Fatalf("grep %+v: %v", matches, err)
+	}
+	lines := map[string]int{}
+	for _, match := range matches {
+		lines[match.Path] = match.Line
+	}
+	if lines["src/one.go"] != 2 || lines["src/two.txt"] != 1 {
+		t.Fatalf("unexpected grep locations: %+v", matches)
 	}
 	if _, err := f.Glob(".", "../*", 10, 10); err == nil {
 		t.Fatal("unsafe glob accepted")

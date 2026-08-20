@@ -29,6 +29,12 @@ jobs:
           go-version: '1.24.x'
           cache: true
       - run: go mod verify
+      - name: Enable unprivileged user namespaces for sandbox tests
+        if: runner.os == 'Linux'
+        run: |
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - run: go test ./...
       - run: go vet ./...
 
@@ -41,6 +47,11 @@ jobs:
         with:
           go-version: '1.24.x'
           cache: true
+      - name: Enable unprivileged user namespaces for sandbox tests
+        run: |
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - run: go test -race ./...
 
   build:
