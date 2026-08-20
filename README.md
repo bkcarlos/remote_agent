@@ -111,6 +111,23 @@ bin/remote-agent-install --client cursor --uninstall          # preview
 bin/remote-agent-install --client cursor --uninstall --apply  # apply with backup
 ```
 
+## CI and releases
+
+Every push and pull request runs tests, `go vet`, the race detector, Linux sandbox integration tests, and cross-platform builds. CI uploads 14-day artifacts for:
+
+- Linux amd64/arm64
+- macOS amd64/arm64
+- Windows amd64
+
+Pushing a `v*` tag publishes a GitHub Release after every required test and build succeeds:
+
+```bash
+git tag -a v0.1.0-alpha.1 -m "v0.1.0-alpha.1"
+git push origin v0.1.0-alpha.1
+```
+
+Release assets contain platform archives and a top-level `SHA256SUMS`. Tags containing `-alpha`, `-beta`, or `-rc` are automatically marked as pre-releases.
+
 ## Test
 
 ```bash

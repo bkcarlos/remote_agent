@@ -100,3 +100,50 @@ jobs:
           name: remote-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
           if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, race, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: remote-agent-*
+          path: artifacts
+      - name: Package release archives
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          for directory in artifacts/remote-agent-*; do
+            platform="${directory##*/remote-agent-}"
+            if [[ "$platform" == windows-* ]]; then
+              (
+                cd "$directory"
+                zip -9 -r "../../release/remote-agent-${RELEASE_TAG}-${platform}.zip" .
+              )
+            else
+              find "$directory" -maxdepth 1 -type f ! -name SHA256SUMS -exec chmod 0755 {} +
+              tar -C "$directory" -czf "release/remote-agent-${RELEASE_TAG}-${platform}.tar.gz" .
+            fi
+          done
+          sha256sum release/* > release/SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          options=(--title "${RELEASE_TAG}" --generate-notes)
+          if [[ "$RELEASE_TAG" =~ -(alpha|beta|rc) ]]; then
+            options+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" release/* "${options[@]}"
