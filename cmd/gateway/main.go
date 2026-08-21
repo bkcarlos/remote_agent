@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -18,6 +19,7 @@ import (
 	"github.com/bkcarlos/remote_agent/internal/gateway"
 	"github.com/bkcarlos/remote_agent/internal/policy"
 	"github.com/bkcarlos/remote_agent/internal/replay"
+	"github.com/bkcarlos/remote_agent/internal/sandbox"
 )
 
 func main() {
@@ -92,8 +94,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if *cgroupRoot == "" && runtime.GOOS == "linux" {
-		log.Print("WARNING: -cgroup-root is not configured; rlimits remain active but cgroup memory controls are unavailable")
+	if runtime.GOOS == "linux" {
+		if landlockErr := sandbox.Supported(); errors.Is(landlockErr, sandbox.ErrLandlockUnavailable) {
+			log.Printf("WARNING: %v; continuing with openat2 workspace confinement and namespace/seccomp isolation", landlockErr)
+		} else if landlockErr != nil {
+			log.Fatalf("check Landlock support: %v", landlockErr)
+		}
+		if *cgroupRoot == "" {
+			log.Print("WARNING: -cgroup-root is not configured; rlimits remain active but cgroup memory controls are unavailable")
+		}
 	}
 	s, err := gateway.New(gateway.Config{AuthToken: token, ApprovalKey: []byte(approvalKey), Transport: transport(*cert), RequireRequestSignature: true, ReplayStore: replayStore}, files, p, audit.New(f))
 	if err != nil {

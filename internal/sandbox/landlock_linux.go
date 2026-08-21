@@ -10,6 +10,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var ErrLandlockUnavailable = errors.New("landlock is unavailable")
+
 type rulesetAttr struct{ HandledAccessFS uint64 }
 type pathBeneathAttr struct {
 	AllowedAccess uint64
@@ -18,9 +20,14 @@ type pathBeneathAttr struct {
 }
 
 func ApplyWorkspace(root string, writable bool) error {
-	abi, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION)
-	if errno != 0 {
-		return fmt.Errorf("landlock is required: %w", errno)
+	abi, err := landlockABI()
+	if errors.Is(err, ErrLandlockUnavailable) {
+		// Workspace operations still use openat2 with RESOLVE_BENEATH and reject
+		// symlinks. Landlock is an additional defense which older kernels may lack.
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	handled := uint64(unix.LANDLOCK_ACCESS_FS_EXECUTE | unix.LANDLOCK_ACCESS_FS_WRITE_FILE |
 		unix.LANDLOCK_ACCESS_FS_READ_FILE | unix.LANDLOCK_ACCESS_FS_READ_DIR |
@@ -76,9 +83,20 @@ func ApplyWorkspace(root string, writable bool) error {
 }
 
 func Supported() error {
-	_, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION)
-	if errno != 0 {
-		return errors.New("Landlock is unavailable")
+	_, err := landlockABI()
+	return err
+}
+
+func landlockABI() (uintptr, error) {
+	abi, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION)
+	if errno == 0 {
+		return abi, nil
 	}
-	return nil
+	// ENOSYS means the kernel predates Landlock, EOPNOTSUPP means it was
+	// disabled at boot, and EPERM is commonly returned by container seccomp
+	// profiles which do not expose the Landlock syscalls.
+	if errno == unix.ENOSYS || errno == unix.EOPNOTSUPP || errno == unix.EPERM {
+		return 0, fmt.Errorf("%w: %v", ErrLandlockUnavailable, errno)
+	}
+	return 0, fmt.Errorf("query landlock ABI: %w", errno)
 }

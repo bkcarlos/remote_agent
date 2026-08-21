@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,12 @@ import (
 )
 
 func TestLandlockConfinesReadOnlyWorker(t *testing.T) {
+	if err := Supported(); err != nil {
+		if errors.Is(err, ErrLandlockUnavailable) {
+			t.Skipf("kernel does not provide Landlock: %v", err)
+		}
+		t.Fatalf("check Landlock support: %v", err)
+	}
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "allowed.txt"), []byte("ok"), 0600)
 	cmd := exec.Command(os.Args[0], "-test.run=TestLandlockHelperProcess")
