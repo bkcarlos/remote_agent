@@ -20,6 +20,7 @@ type Store interface {
 type ChallengeStore interface {
 	Store
 	Put(namespace, id string, payload []byte, expiresAt time.Time) error
+	Peek(namespace, id string, now time.Time) ([]byte, error)
 	Take(namespace, id string, now time.Time) ([]byte, error)
 }
 
@@ -66,6 +67,15 @@ func (m *Memory) Put(namespace, id string, payload []byte, expiresAt time.Time) 
 	}
 	m.challenges[key] = memoryChallenge{payload: append([]byte(nil), payload...), expires: expiresAt}
 	return nil
+}
+func (m *Memory) Peek(namespace, id string, now time.Time) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, exists := m.challenges[namespace+"\x00"+id]
+	if !exists || !entry.expires.After(now) {
+		return nil, ErrNotFound
+	}
+	return append([]byte(nil), entry.payload...), nil
 }
 func (m *Memory) Take(namespace, id string, now time.Time) ([]byte, error) {
 	m.mu.Lock()
@@ -114,6 +124,22 @@ func (s *Bolt) Put(namespace, id string, payload []byte, expiresAt time.Time) er
 		copy(value[8:], payload)
 		return bucket.Put(key, value)
 	})
+}
+func (s *Bolt) Peek(namespace, id string, now time.Time) ([]byte, error) {
+	var payload []byte
+	err := s.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte("challenge:" + namespace))
+		if bucket == nil {
+			return ErrNotFound
+		}
+		value := bucket.Get([]byte(id))
+		if len(value) < 9 || !time.Unix(0, int64(binary.BigEndian.Uint64(value[:8]))).After(now) {
+			return ErrNotFound
+		}
+		payload = append([]byte(nil), value[8:]...)
+		return nil
+	})
+	return payload, err
 }
 func (s *Bolt) Take(namespace, id string, now time.Time) ([]byte, error) {
 	var payload []byte

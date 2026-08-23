@@ -26,6 +26,45 @@ func exerciseStore(t *testing.T, store Store) {
 	}
 }
 func TestMemory(t *testing.T) { exerciseStore(t, NewMemory()) }
+
+func exerciseChallengePeek(t *testing.T, store ChallengeStore) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := store.Put("approval", "peek", []byte("payload"), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Peek("approval", "peek", now)
+	if err != nil || string(first) != "payload" {
+		t.Fatalf("first peek = %q, %v", first, err)
+	}
+	first[0] = 'X'
+	second, err := store.Peek("approval", "peek", now)
+	if err != nil || string(second) != "payload" {
+		t.Fatalf("second peek = %q, %v", second, err)
+	}
+	taken, err := store.Take("approval", "peek", now)
+	if err != nil || string(taken) != "payload" {
+		t.Fatalf("take after peek = %q, %v", taken, err)
+	}
+	if _, err := store.Peek("approval", "peek", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("consumed challenge remained visible: %v", err)
+	}
+}
+
+func TestChallengePeekDoesNotConsume(t *testing.T) {
+	t.Run("memory", func(t *testing.T) {
+		exerciseChallengePeek(t, NewMemory())
+	})
+	t.Run("bolt", func(t *testing.T) {
+		store, err := OpenBolt(filepath.Join(t.TempDir(), "replay.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		exerciseChallengePeek(t, store)
+	})
+}
+
 func TestBoltPersistsAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "replay.db")
 	now := time.Now().UTC()
@@ -56,6 +95,10 @@ func TestBoltChallengePersistsAndIsConsumedAtomically(t *testing.T) {
 	first.Close()
 	second, _ := OpenBolt(path)
 	defer second.Close()
+	peeked, err := second.Peek("approval", "challenge", now)
+	if err != nil || string(peeked) != "payload" {
+		t.Fatalf("peek after restart %q: %v", peeked, err)
+	}
 	payload, err := second.Take("approval", "challenge", now)
 	if err != nil || string(payload) != "payload" {
 		t.Fatalf("take %q: %v", payload, err)
