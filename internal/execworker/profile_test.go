@@ -2,6 +2,7 @@ package execworker
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -12,9 +13,16 @@ func testLimits() Limits {
 	}
 }
 
+func testExecutablePath() string {
+	if runtime.GOOS == "windows" {
+		return `C:\Program Files\Go\bin\go.exe`
+	}
+	return "/usr/bin/go"
+}
+
 func testProfile() TaskProfile {
 	return TaskProfile{
-		Name: "go-test", Executable: "/usr/bin/go", FixedArgv: []string{"test"},
+		Name: "go-test", Executable: testExecutablePath(), FixedArgv: []string{"test"},
 		AllowedArgvPrefixes: [][]string{{"./..."}, {"-run"}}, WorkspaceMode: WorkspaceReadOnly,
 		EnvAllowlist: []string{"GOFLAGS", "GOCACHE"}, Limits: testLimits(),
 	}

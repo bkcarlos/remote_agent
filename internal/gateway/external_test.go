@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -402,8 +403,12 @@ func TestNetworkTransferIsSplitAndAuditDoesNotLeakTargetOrHeaders(t *testing.T) 
 }
 
 func execTestProfile() execworker.TaskProfile {
+	executable := "/usr/bin/env"
+	if runtime.GOOS == "windows" {
+		executable = `C:\Windows\System32\cmd.exe`
+	}
 	return execworker.TaskProfile{
-		Name: "fixed-task", Executable: "/usr/bin/env", WorkspaceMode: execworker.WorkspaceNone,
+		Name: "fixed-task", Executable: executable, WorkspaceMode: execworker.WorkspaceNone,
 		AllowedArgvPrefixes: [][]string{{"ok"}},
 		Limits:              execworker.Limits{TimeoutMillis: 5000, CPUSeconds: 5, MemoryBytes: 64 << 20, PIDs: 16, OutputBytes: 1 << 20},
 	}

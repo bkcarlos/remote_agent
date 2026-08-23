@@ -282,10 +282,12 @@ func TestReadImageMagicDimensionsLimitsAndWorkspaceBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	linked := filepath.Join(root, "linked.png")
-	if err := os.Link(outside, linked); err == nil {
-		response := service.Execute(signedJob(t, signer, "read_image", "linked.png", func(job *Job) { job.MaxBytes = 4096 }))
-		if response.ErrorKind != ErrorKindUnsafeFile {
-			t.Fatalf("hard-linked image accepted: %+v", response)
+	if runtime.GOOS != "windows" {
+		if err := os.Link(outside, linked); err == nil {
+			response := service.Execute(signedJob(t, signer, "read_image", "linked.png", func(job *Job) { job.MaxBytes = 4096 }))
+			if response.ErrorKind != ErrorKindUnsafeFile {
+				t.Fatalf("hard-linked image accepted: %+v", response)
+			}
 		}
 	}
 }
@@ -388,9 +390,11 @@ func TestEditPreservesEncodingBOMNewlineAndPermissions(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("encoded content changed unexpectedly: %x", got)
 	}
-	info, _ := os.Stat(path)
-	if info.Mode().Perm() != 0o640 {
-		t.Fatalf("permissions changed: %o", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		info, _ := os.Stat(path)
+		if info.Mode().Perm() != 0o640 {
+			t.Fatalf("permissions changed: %o", info.Mode().Perm())
+		}
 	}
 }
 
