@@ -28,6 +28,11 @@ type Config struct {
 	MaxWriteBytes int64
 	DeniedNames   []string
 	AllowWrite    bool
+	AllowNetwork  bool
+	AllowRemote   bool
+	AllowExec     bool
+	AllowDebug    bool
+	AllowMem      bool
 }
 type Engine struct{ cfg Config }
 
@@ -63,13 +68,47 @@ func (e *Engine) Evaluate(tool, path string) Decision {
 		}
 	}
 	switch tool {
-	case "read_file", "list_dir", "checksum", "file_info", "glob", "grep":
+	case "read_file", "multi_read", "list_dir", "checksum", "file_info", "glob", "grep", "diff":
 		return Decision{true, false, "allow-workspace-read", "workspace read allowed"}
-	case "write_file":
+	case "write_file", "edit", "multi_edit":
 		if !e.cfg.AllowWrite {
 			return Decision{false, false, "deny-write-disabled", "workspace writes are disabled"}
 		}
 		return Decision{true, true, "approve-workspace-write", "write requires approval"}
+	case "web_fetch", "upload":
+		if !e.cfg.AllowNetwork {
+			return Decision{false, false, "deny-network-disabled", "network tools are disabled"}
+		}
+		return Decision{true, tool == "upload", "allow-network-profile", "network profile access allowed"}
+	case "download":
+		if !e.cfg.AllowNetwork {
+			return Decision{false, false, "deny-network-disabled", "network tools are disabled"}
+		}
+		if !e.cfg.AllowWrite {
+			return Decision{false, false, "deny-write-disabled", "workspace writes are disabled"}
+		}
+		return Decision{true, true, "approve-network-download", "network download to workspace requires approval"}
+	case "ssh_exec", "sftp_list", "sftp_read", "sftp_write", "sftp_mkdir", "sftp_rename":
+		if !e.cfg.AllowRemote {
+			return Decision{false, false, "deny-remote-disabled", "remote tools are disabled"}
+		}
+		approval := tool != "sftp_list" && tool != "sftp_read"
+		return Decision{true, approval, "allow-remote-profile", "remote profile access allowed"}
+	case "exec_run", "process_start", "process_status", "process_stop":
+		if !e.cfg.AllowExec {
+			return Decision{false, false, "deny-exec-disabled", "execution tools are disabled"}
+		}
+		return Decision{true, tool == "process_stop", "allow-exec-profile", "administrator task profile allowed"}
+	case "debug_status", "debug_signal":
+		if !e.cfg.AllowDebug {
+			return Decision{false, false, "deny-debug-disabled", "debug tools are disabled"}
+		}
+		return Decision{true, tool == "debug_signal", "allow-debug-profile", "managed child debugging allowed"}
+	case "mem_scan":
+		if !e.cfg.AllowMem {
+			return Decision{false, false, "deny-mem-disabled", "memory tools are disabled"}
+		}
+		return Decision{true, true, "allow-mem-profile", "managed child memory scan allowed"}
 	default:
 		return Decision{false, false, "deny-unknown-tool", "tool is not registered"}
 	}

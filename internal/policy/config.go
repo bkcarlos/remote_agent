@@ -15,6 +15,11 @@ import (
 type Document struct {
 	Version       string   `json:"version"`
 	AllowWrite    *bool    `json:"allow_write,omitempty"`
+	AllowNetwork  *bool    `json:"allow_network,omitempty"`
+	AllowRemote   *bool    `json:"allow_remote,omitempty"`
+	AllowExec     *bool    `json:"allow_exec,omitempty"`
+	AllowDebug    *bool    `json:"allow_debug,omitempty"`
+	AllowMem      *bool    `json:"allow_mem,omitempty"`
 	MaxReadBytes  *int64   `json:"max_read_bytes,omitempty"`
 	MaxWriteBytes *int64   `json:"max_write_bytes,omitempty"`
 	DeniedNames   []string `json:"denied_names,omitempty"`
@@ -61,6 +66,21 @@ func ParseDocument(b []byte) (Document, error) {
 func Restrict(base Config, d Document) Config {
 	if d.AllowWrite != nil && !*d.AllowWrite {
 		base.AllowWrite = false
+	}
+	if d.AllowNetwork != nil && !*d.AllowNetwork {
+		base.AllowNetwork = false
+	}
+	if d.AllowRemote != nil && !*d.AllowRemote {
+		base.AllowRemote = false
+	}
+	if d.AllowExec != nil && !*d.AllowExec {
+		base.AllowExec = false
+	}
+	if d.AllowDebug != nil && !*d.AllowDebug {
+		base.AllowDebug = false
+	}
+	if d.AllowMem != nil && !*d.AllowMem {
+		base.AllowMem = false
 	}
 	if d.MaxReadBytes != nil && (base.MaxReadBytes <= 0 || *d.MaxReadBytes < base.MaxReadBytes) {
 		base.MaxReadBytes = *d.MaxReadBytes

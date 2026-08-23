@@ -49,6 +49,29 @@ func TestDefaultsRemainWhenCustomDeniedNamesExist(t *testing.T) {
 	}
 }
 
+func TestCapabilityDefaultsAreDisabledAndRestrictionsCannotEnable(t *testing.T) {
+	defaults := New(Config{})
+	for _, tool := range []string{"web_fetch", "ssh_exec", "exec_run", "debug_status", "mem_scan"} {
+		if defaults.Evaluate(tool, "ordinary.txt").Allowed {
+			t.Fatalf("default policy exposed %s", tool)
+		}
+	}
+	base := Config{AllowNetwork: false, AllowRemote: false, AllowExec: false, AllowDebug: false, AllowMem: false}
+	restricted := Restrict(base, Document{
+		Version: "cannot-enable", AllowNetwork: boolPtr(true), AllowRemote: boolPtr(true),
+		AllowExec: boolPtr(true), AllowDebug: boolPtr(true), AllowMem: boolPtr(true),
+	})
+	if restricted.AllowNetwork || restricted.AllowRemote || restricted.AllowExec || restricted.AllowDebug || restricted.AllowMem {
+		t.Fatalf("restriction enabled a capability: %+v", restricted)
+	}
+	enabled := New(Config{AllowNetwork: true, AllowRemote: true, AllowExec: true, AllowDebug: true, AllowMem: true})
+	for _, tool := range []string{"web_fetch", "ssh_exec", "exec_run", "debug_status", "mem_scan"} {
+		if !enabled.Evaluate(tool, "ordinary.txt").Allowed {
+			t.Fatalf("explicit policy did not enable %s", tool)
+		}
+	}
+}
+
 func TestLoadFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policy.json")
 	os.WriteFile(path, []byte(`{"version":"2026-01"}`), 0600)
