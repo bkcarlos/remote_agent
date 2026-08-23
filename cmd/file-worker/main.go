@@ -17,12 +17,12 @@ func main() {
 	if *workspace == "" {
 		fatal("-workspace is required")
 	}
-	encodedKey := os.Getenv("REMOTE_AGENT_WORKER_KEY")
-	key, err := base64.RawStdEncoding.DecodeString(encodedKey)
-	if err != nil || len(key) < 32 {
-		fatal("valid worker key is required")
+	encodedPublicKey := os.Getenv("REMOTE_AGENT_WORKER_PUBLIC_KEY")
+	publicKey, err := base64.RawStdEncoding.DecodeString(encodedPublicKey)
+	if err != nil || len(publicKey) != 32 {
+		fatal("valid Ed25519 worker public key is required")
 	}
-	_ = os.Unsetenv("REMOTE_AGENT_WORKER_KEY")
+	_ = os.Unsetenv("REMOTE_AGENT_WORKER_PUBLIC_KEY")
 	var deniedNames []string
 	if raw := os.Getenv("REMOTE_AGENT_DENIED_NAMES"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &deniedNames); err != nil {
@@ -30,7 +30,7 @@ func main() {
 		}
 	}
 	_ = os.Unsetenv("REMOTE_AGENT_DENIED_NAMES")
-	service, err := fileworker.NewWithDenied(*workspace, key, deniedNames)
+	service, err := fileworker.NewWithDenied(*workspace, publicKey, deniedNames)
 	if err != nil {
 		fatal(err.Error())
 	}

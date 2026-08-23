@@ -17,5 +17,16 @@ func configureWorkerProcess(cmd *exec.Cmd) {
 		GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
 		GidMappingsEnableSetgroups: false,
 		Pdeathsig:                  syscall.SIGKILL,
+		Setpgid:                    true,
 	}
+}
+
+func killWorkerProcess(cmd *exec.Cmd) error {
+	if cmd.Process == nil {
+		return os.ErrProcessDone
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err == nil {
+		return nil
+	}
+	return cmd.Process.Kill()
 }

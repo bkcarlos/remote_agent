@@ -27,3 +27,25 @@ func TestDecodeStrict(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeStrictInitializeStructures(t *testing.T) {
+	valid := `{"protocolVersion":"2025-06-18","capabilities":{"sampling":{}},"clientInfo":{"name":"client","version":"1"}}`
+	var params InitializeParams
+	if err := DecodeStrict([]byte(valid), &params); err != nil {
+		t.Fatalf("valid initialize params rejected: %v", err)
+	}
+	if params.ProtocolVersion != "2025-06-18" || params.Capabilities == nil || params.ClientInfo.Name != "client" || params.ClientInfo.Version != "1" {
+		t.Fatalf("initialize params decoded incorrectly: %+v", params)
+	}
+	for _, raw := range []string{
+		`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"client","version":"1"},"unknown":true}`,
+		`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"client","version":"1","unknown":true}}`,
+		`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"first","name":"second","version":"1"}}`,
+		valid + ` true`,
+	} {
+		var value InitializeParams
+		if err := DecodeStrict([]byte(raw), &value); err == nil {
+			t.Errorf("accepted non-strict initialize params: %s", raw)
+		}
+	}
+}
