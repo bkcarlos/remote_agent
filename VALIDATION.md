@@ -12,12 +12,7 @@ OS:   darwin
 Arch: arm64
 ```
 
-The host could not reach `proxy.golang.org` or `golang.org` during validation. The following required modules were not present in the local module cache:
-
-- `golang.org/x/crypto v0.36.0`
-- `github.com/pkg/sftp v1.13.7`
-
-Both the default module proxy and one `GOPROXY=direct` attempt timed out. No further download attempts were made.
+The default Go proxy and direct origin initially timed out. Dependencies were later obtained through a temporary alternate module proxy while normal Go checksum-database verification remained enabled. `go mod tidy` found and corrected an invalid manually recorded `golang.org/x/sync v0.12.0` content hash, completed the transitive module graph, and `GOPROXY=off go mod verify` now passes from the local verified cache.
 
 ## Passed locally
 
@@ -34,75 +29,41 @@ Results:
 - No unformatted Go files were reported.
 - No whitespace errors were reported.
 
-### Unit tests without the unavailable SSH/SFTP modules
+### Complete tests, race detector, vet, and native build
 
-The following package set passed with both the normal test runner and race detector:
-
-```bash
-go test -count=1 \
-  ./cmd/approve ./cmd/exec-worker ./cmd/file-worker ./cmd/install ./cmd/network-worker \
-  ./internal/approval ./internal/approvalview ./internal/audit ./internal/capability \
-  ./internal/execworker ./internal/fileworker ./internal/installer ./internal/networkworker \
-  ./internal/policy ./internal/protocol ./internal/replay ./internal/requestmeta \
-  ./internal/sandbox ./internal/textfile ./internal/transportauth ./internal/workspace \
-  ./internal/workspaceregistry
-
-go test -race -count=1 <the same package set>
-```
-
-During the first full test attempt, `internal/approvalview` exposed a faulty test mutation: the test uppercased a hash containing only digits, so the value did not change. The test was corrected to use an actually uppercase hexadecimal character, and `internal/approvalview` then passed individually and in both package-set runs.
-
-### Vet and native builds without the unavailable modules
-
-The package set above passed:
+The complete repository dependency graph passed from the verified offline module cache:
 
 ```bash
-go vet <package set>
-go build <package set>
+GOPROXY=off go test -count=1 ./...
+GOPROXY=off go test -race -count=1 ./...
+GOPROXY=off go vet ./...
+GOPROXY=off go build ./...
+GOPROXY=off go mod verify
 ```
 
-The compatibility bridge also built successfully on macOS:
+Validation found and fixed:
+
+- A test mutation that uppercased a digits-only SHA-256 value and therefore did not mutate it.
+- A two-dimensional Exec profile clone that replaced configured argv prefixes with empty slices, which prevented normal Exec calls and session revocation.
+- Gateway lifecycle tests that used a non-durable audit buffer for an L3 operation.
+- A WorkspaceRouter test clock data race.
+- An overly short File Worker test startup deadline under heavy concurrent local validation load.
+
+Targeted Gateway/File tests passed five times normally and three times under the race detector before the final full runs.
+
+### Cross-platform compilation
+
+The complete repository compiled with `CGO_ENABLED=0` for every CI build target:
 
 ```bash
-go build ./cmd/stdio-bridge
+GOOS=linux GOARCH=amd64 go build ./...
+GOOS=linux GOARCH=arm64 go build ./...
+GOOS=darwin GOARCH=amd64 go build ./...
+GOOS=darwin GOARCH=arm64 go build ./...
+GOOS=windows GOARCH=amd64 go build ./...
 ```
 
-### Linux cross-builds without the unavailable modules
-
-The package set above and the compatibility bridge compiled successfully for Linux amd64:
-
-```bash
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build <package set>
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/stdio-bridge
-```
-
-This compiled the Linux build-tagged File, Network, Exec, workspace, sandbox, cgroup, Landlock, seccomp, and openat2 code included in those packages. It did not execute that code.
-
-## Blocked on this host
-
-The following full commands could not complete because the two SSH/SFTP modules could not be downloaded:
-
-```bash
-go test -count=1 ./...
-go test -race -count=1 ./...
-go vet ./...
-go build ./...
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...
-go mod verify
-```
-
-Packages not compiled or tested as part of the complete dependency graph:
-
-- `cmd/gateway`
-- `cmd/remote-worker`
-- `internal/credentialstore`
-- `internal/gateway`
-- `internal/remoteworker`
-- `cmd/stdio-bridge` tests, because those tests import Gateway code
-
-`cmd/stdio-bridge` production code itself built successfully as noted above.
-
-When the module files are available through a trusted cache or reachable proxy, rerun the full commands exactly as listed above. Do not treat the current dependency timeout as either a pass or a source-code failure for the blocked packages.
+These commands compile build-tagged platform code but do not execute Linux kernel isolation or Windows/macOS production workers.
 
 ## Requires a Linux production host
 

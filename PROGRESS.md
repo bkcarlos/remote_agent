@@ -6,7 +6,7 @@
 
 当前工作区已把 File、Network、Remote、Exec/Debug/Mem 统一接入标准 MCP Streamable HTTP Gateway。部署模型仍是受控私网中的单用户开发机；不提供 GUI、公网 SaaS、任意 shell、任意 SSH/Network 目标或宿主进程调试。
 
-本机可执行的格式检查、单元测试、race、vet、macOS 构建和 Linux amd64 交叉构建已完成；可解析依赖的范围全部通过。完整 Gateway/Remote 依赖图因本机无法下载 `golang.org/x/crypto` 和 `github.com/pkg/sftp` 而阻塞。详细命令、覆盖范围和 Linux/真实客户端待验证项见 `VALIDATION.md`。
+完整依赖图的格式检查、模块校验、单元测试、race、vet、macOS 构建以及 CI 五个目标的交叉构建均已在本机通过。Linux 内核隔离和真实 Network/SSH/MCP 客户端端到端流程仍需目标环境验证；详见 `VALIDATION.md`。
 
 ## 本批完成
 
@@ -78,20 +78,21 @@
 
 已在 macOS arm64 / Go 1.25.5 完成并通过：
 
-- `gofmt -l cmd internal`
-- 当前提交与 `origin/main..HEAD` 的 `git diff --check`
-- 不依赖缺失 SSH/SFTP 模块的普通测试和 race 测试
-- 同一范围的 `go vet`、macOS build、Linux amd64 cross-build
-- `cmd/stdio-bridge` 的 macOS 与 Linux amd64 build
+- `gofmt -l cmd internal`、`git diff --check`
+- `GOPROXY=off go mod verify`
+- `GOPROXY=off go test -count=1 ./...`
+- `GOPROXY=off go test -race -count=1 ./...`
+- `GOPROXY=off go vet ./...`
+- `GOPROXY=off go build ./...`
+- Linux amd64/arm64、macOS amd64/arm64、Windows amd64 的完整 `CGO_ENABLED=0` 交叉构建
 
-首次全量测试发现 `internal/approvalview` 测试数据没有实际产生大写哈希；已修正测试并重新通过。
+验证期间修复了 approval review 测试数据、Exec profile argv prefix 深拷贝、L3 测试审计 writer、WorkspaceRouter 测试时钟 race，以及高负载下 File Worker 测试启动等待过短的问题。
 
 仍需完成：
 
-1. 在可获得 `golang.org/x/crypto v0.36.0` 与 `github.com/pkg/sftp v1.13.7` 的可信模块缓存或网络环境中执行完整 `test/race/vet/build`。
-2. 在目标 Linux 内核实际执行 namespace、seccomp、Landlock、openat2、cgroup v2、Exec lifecycle 和 credential permission 测试。
-3. 使用真实 HTTPS/私网 HTTP、SSH/SFTP 服务以及目标版本 Claude Code、Codex、Zed 完成端到端回放。
-4. 验证 Registry SIGHUP/expiry 期间新旧 per-workspace Exec supervisor 的原子切换和旧进程清理。
+1. 在目标 Linux 内核实际执行 namespace、seccomp、Landlock、openat2、cgroup v2、Exec lifecycle 和 credential permission 测试。
+2. 使用真实 HTTPS/私网 HTTP、SSH/SFTP 服务以及目标版本 Claude Code、Codex、Zed 完成端到端回放。
+3. 验证 Registry SIGHUP/expiry 期间新旧 per-workspace Exec supervisor 的原子切换和旧进程清理。
 
 完整记录见 `VALIDATION.md`。
 

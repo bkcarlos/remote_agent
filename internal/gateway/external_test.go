@@ -151,6 +151,10 @@ type failingAuditWriter struct{}
 
 func (failingAuditWriter) Write([]byte) (int, error) { return 0, errors.New("audit unavailable") }
 
+type durableAuditBuffer struct{ bytes.Buffer }
+
+func (*durableAuditBuffer) Sync() error { return nil }
+
 func TestServerTokenHidesAndFailClosesApprovalExternalTools(t *testing.T) {
 	network := &fakeNetworkExecutor{}
 	server, err := New(Config{
@@ -261,7 +265,9 @@ func TestClientManagedWriteDoesNotRequireOrVerifyApprovalToken(t *testing.T) {
 	}
 	token := strings.Repeat("t", 32)
 	_, _, preview := request(t, server, call(1, "write_file", `{"path":"a.txt","content":"after"}`), token, "")
-	if preview.Error != nil || !strings.Contains(mustJSON(preview.Result), `"approval_mode":"client_managed"`) || strings.Contains(mustJSON(preview.Result), `"approval_required":true`) {
+	var previewPayload map[string]any
+	toolPayload(t, preview, &previewPayload)
+	if preview.Error != nil || previewPayload["approval_mode"] != ApprovalModeClientManaged || previewPayload["approval_required"] != false {
 		t.Fatalf("client-managed preview = %+v", preview)
 	}
 	_, _, applied := request(t, server, call(2, "write_file", `{"path":"a.txt","content":"after","expected_hash":"`+digest([]byte("before"))+`","apply":true}`), token, "")
@@ -509,7 +515,7 @@ func TestSessionDeleteCancelsActiveCallBeforeExecRevoke(t *testing.T) {
 	server, err := New(Config{
 		AuthToken: strings.Repeat("t", 32), ApprovalMode: ApprovalModeClientManaged, WorkspaceID: "workspace-test",
 		ExecExecutor: executor, ExecProfiles: map[string]execworker.TaskProfile{profile.Name: profile}, ExecSigner: signer,
-	}, &captureFileExecutor{}, policy.New(policy.Config{AllowExec: true}), audit.New(&bytes.Buffer{}))
+	}, &captureFileExecutor{}, policy.New(policy.Config{AllowExec: true}), audit.New(&durableAuditBuffer{}))
 	if err != nil {
 		t.Fatal(err)
 	}

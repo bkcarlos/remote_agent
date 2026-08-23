@@ -137,11 +137,12 @@ func TestWorkspaceRouterBackgroundExpiryRevokesWithoutRequest(t *testing.T) {
 }
 
 func TestWorkspaceRouterExpiryRevokesServerAndSessions(t *testing.T) {
-	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
-	workspace := routedWorkspace("expiring-workspace-01", now)
-	workspace.ExpiresAt = now.Add(time.Minute)
+	start := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	clock := &controlledRouterClock{now: start}
+	workspace := routedWorkspace("expiring-workspace-01", start)
+	workspace.ExpiresAt = start.Add(time.Minute)
 	server, _ := newStandardTestServer(t, Config{AuthToken: standardTestToken})
-	router := testWorkspaceRouter(t, func() time.Time { return now })
+	router := testWorkspaceRouter(t, clock.Now)
 	if err := router.ReplaceAll([]WorkspaceBinding{{Workspace: workspace, Handler: server}}); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestWorkspaceRouterExpiryRevokesServerAndSessions(t *testing.T) {
 		t.Fatalf("initialize status=%d sessions=%d", initialized.Code, len(server.sessions.sessions))
 	}
 
-	now = workspace.ExpiresAt
+	clock.Set(workspace.ExpiresAt)
 	expired := routeRequest(router, endpoint, `{}`, "")
 	if expired.Code != http.StatusNotFound || len(server.sessions.sessions) != 0 {
 		t.Fatalf("expired status=%d sessions=%d", expired.Code, len(server.sessions.sessions))

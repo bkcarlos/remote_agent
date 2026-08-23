@@ -363,9 +363,10 @@ func cloneExecProfiles(profiles map[string]execworker.TaskProfile) map[string]ex
 	for id, profile := range profiles {
 		profile.FixedArgv = append([]string(nil), profile.FixedArgv...)
 		profile.EnvAllowlist = append([]string(nil), profile.EnvAllowlist...)
-		profile.AllowedArgvPrefixes = make([][]string, len(profile.AllowedArgvPrefixes))
-		for index := range profile.AllowedArgvPrefixes {
-			profile.AllowedArgvPrefixes[index] = append([]string(nil), profile.AllowedArgvPrefixes[index]...)
+		prefixes := profile.AllowedArgvPrefixes
+		profile.AllowedArgvPrefixes = make([][]string, len(prefixes))
+		for index := range prefixes {
+			profile.AllowedArgvPrefixes[index] = append([]string(nil), prefixes[index]...)
 		}
 		cloned[id] = profile
 	}

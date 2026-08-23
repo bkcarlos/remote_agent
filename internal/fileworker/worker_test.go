@@ -1002,7 +1002,7 @@ printf '{"token_id":"%s","worker_id":"commit-worker","sha256":"committed"}\n' "$
 		}{response: response, err: executeErr}
 	}()
 	started := filepath.Join(root, "started")
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, err := os.Stat(started); err == nil {
 			break
