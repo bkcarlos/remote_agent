@@ -1,12 +1,12 @@
 # Secure Remote Agent 代码进度
 
-更新时间：2026-08-23
+更新时间：2026-08-24
 
 ## 当前定位
 
 当前工作区已把 File、Network、Remote、Exec/Debug/Mem 统一接入标准 MCP Streamable HTTP Gateway。部署模型仍是受控私网中的单用户开发机；不提供 GUI、公网 SaaS、任意 shell、任意 SSH/Network 目标或宿主进程调试。
 
-完整依赖图的格式检查、模块校验、单元测试、race、vet、macOS 构建以及 CI 五个目标的交叉构建均已在本机通过。Linux 内核隔离和真实 Network/SSH/MCP 客户端端到端流程仍需目标环境验证；详见 `VALIDATION.md`。
+完整依赖图的格式检查、模块校验、单元测试、race、vet、macOS 构建以及 CI 五个目标的交叉构建均已在本机通过。Ubuntu 24.04 / Linux 6.8 实机上的 Gateway、File、Network、Remote、Exec/Debug/Mem、cgroup v2、namespace/seccomp、Session 和 Registry 黑盒验证也已通过；真实 Claude Code/Codex/Zed 与生产网络环境仍需验证，详见 `VALIDATION.md`。
 
 ## 本批完成
 
@@ -88,11 +88,24 @@
 
 验证期间修复了 approval review 测试数据、Exec profile argv prefix 深拷贝、L3 测试审计 writer、WorkspaceRouter 测试时钟 race，以及高负载下 File Worker 测试启动等待过短的问题。
 
+Ubuntu 24.04 / Linux 6.8 实机额外通过：
+
+- Streamable HTTP init、Bearer auth、File read/write、durable audit、Session DELETE
+- 当前 Vela Agent 经 SSH tunnel 作为跨机 MCP 客户端完成 tools/read/write/read-back/DELETE 全流程
+- 目标机私网接口监听正常；公网 NAT `18080` 被外围安全策略阻断，仅 SSH 入口可达
+- workspace traversal/symlink escape 拒绝与公网明文 HTTP bind 拒绝
+- systemd delegated cgroup v2、Exec namespace、`NoNewPrivs`、seccomp filter 和资源限制
+- 受控私网 HTTP `web_fetch`/`download`/`upload`
+- 临时独立账号上的 private-key SSH、strict `known_hosts`、argv allowlist 和完整 SFTP 操作
+- Exec run/process/debug/mem scan、Session revoke 杀进程与 cgroup 清理
+- Registry 无效 reload 原子回退、有效 SIGHUP reload 和后台 expiry
+
 仍需完成：
 
-1. 在目标 Linux 内核实际执行 namespace、seccomp、Landlock、openat2、cgroup v2、Exec lifecycle 和 credential permission 测试。
-2. 使用真实 HTTPS/私网 HTTP、SSH/SFTP 服务以及目标版本 Claude Code、Codex、Zed 完成端到端回放。
-3. 验证 Registry SIGHUP/expiry 期间新旧 per-workspace Exec supervisor 的原子切换和旧进程清理。
+1. 使用目标版本 Claude Code、Codex、Zed 验证 Streamable HTTP 和客户端审批表现。
+2. 在生产网络环境补测 TLS、redirect、DNS rebinding、timeout/limit/overwrite conflict，以及 `ssh-agent` 和正式 chroot/restricted account。
+3. 补测 sandbox denied-syscall、credential 错误权限/`O_NOFOLLOW`、cgroup OOM/PID/CPU 压力、并发 reload/expiry 与 Exec supervisor 清理。
+4. 使用专用非 root Gateway 账号验证 installer、持久 systemd 服务、升级/回滚，以及 disk-full/fsync/SIGKILL/掉电故障路径。
 
 完整记录见 `VALIDATION.md`。
 

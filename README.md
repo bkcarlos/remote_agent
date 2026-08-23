@@ -55,9 +55,26 @@ The Bridge speaks the same standard session protocol, supports bounded concurren
 
 The Gateway never opens workspace files directly. Every file operation starts an independent, short-lived `file-worker` process with a sanitized environment and an Ed25519-signed, scoped, 30-second capability. The Gateway keeps the private signing key; Workers receive only the public verification key. Capabilities bind request/session/Bridge identity, Worker type, operation, normalized paths, policy decision, resource limits, argument digest, expected hashes, and approved write targets.
 
-On Linux the child is created in new user, mount, network, PID, IPC, and UTS namespaces with a parent-death signal. After capability verification it applies `no_new_privs`, CPU/open-file/process/file-size/core rlimits and a seccomp-BPF filter. When supported by the kernel, it also applies a Landlock ruleset restricted to the workspace, with no workspace write rights for read jobs. Older kernels, kernels with Landlock disabled, and container seccomp profiles that hide its syscalls continue with an explicit audited security-degradation warning and rely on the `openat2` workspace boundary plus namespace/seccomp isolation. Other sandbox or resource-limit setup failures remain fail-closed. No Linux Worker receives host network access.
+On Linux the child is created in new user, mount, network, PID, IPC, and UTS namespaces with a parent-death signal. After capability verification it applies `no_new_privs`, CPU/open-file/process/file-size/core rlimits and a seccomp-BPF filter. When supported by the kernel, it also applies a Landlock ruleset restricted to the workspace, with no workspace write rights for read jobs. Older kernels, kernels with Landlock disabled, and container seccomp profiles that hide its syscalls continue with an explicit audited security-degradation warning and rely on the `openat2` workspace boundary plus namespace/seccomp isolation. Other sandbox or resource-limit setup failures remain fail-closed. File Workers and Exec children receive no host network access; the separately enabled Network and Remote Workers receive only their administrator-profiled outbound access.
 
-For production Linux deployments, pass a systemd/container-runtime delegated cgroup v2 directory using `-cgroup-root`. Each Worker receives a 256 MiB memory limit, disabled swap, 32-PID limit, and one-CPU quota. If a configured cgroup cannot be created or constrained, the job is denied; omitting `-cgroup-root` emits and audits a security-degradation warning. Approval IDs and optional HMAC nonces are atomically persisted in the BoltDB file configured by `-replay-db` (default `state/replay.db`). MCP sessions are bounded, principal-bound, in-memory sessions with an idle TTL.
+For production Linux deployments, pass a systemd/container-runtime delegated cgroup v2 directory using `-cgroup-root`. Each Worker receives a 256 MiB memory limit, disabled swap, 32-PID limit, and one-CPU quota. If a configured cgroup cannot be created or constrained, the job is denied; omitting `-cgroup-root` emits and audits a security-degradation warning.
+
+With systemd 254 or newer, `Delegate=yes` alone is not sufficient: the service process must not remain in the delegated root, and the required controllers must be enabled before Gateway starts creating child cgroups. The following layout was validated with systemd 255; adjust the unit name and paths for the deployment:
+
+```ini
+[Service]
+Delegate=yes
+DelegateSubgroup=gateway
+ExecStartPre=/bin/sh -c 'printf "+cpu +memory +pids" > /sys/fs/cgroup/system.slice/remote-agent.service/cgroup.subtree_control'
+ExecStart=/opt/remote-agent/gateway \
+  -cgroup-root /sys/fs/cgroup/system.slice/remote-agent.service \
+  -exec-cgroup-root /sys/fs/cgroup/system.slice/remote-agent.service \
+  ...
+```
+
+Without `DelegateSubgroup` (or an equivalent empty delegated parent layout), child controller files such as `memory.swap.max` may remain unavailable and the job will correctly fail closed. Verify `cgroup.subtree_control` contains `cpu memory pids` under the exact directory passed to both cgroup flags.
+
+Approval IDs and optional HMAC nonces are atomically persisted in the BoltDB file configured by `-replay-db` (default `state/replay.db`). MCP sessions are bounded, principal-bound, in-memory sessions with an idle TTL.
 
 Writes and every optional Worker family are disabled by default. `-approval-mode` has two values:
 
