@@ -1,96 +1,126 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
-
-	"github.com/bkcarlos/remote_agent/internal/transportauth"
 )
 
+const (
+	defaultMaxBytes   = 2 << 20
+	defaultMaxPending = 32
+	maxMaxPending     = 1024
+)
+
+type cliOptions struct {
+	endpoint         string
+	timeout          time.Duration
+	maxMessageBytes  int
+	maxResponseBytes int
+	maxConcurrency   int
+	maxPending       int
+	allowPrivateHTTP bool
+	signRequests     bool
+}
+
 func main() {
-	endpoint := flag.String("endpoint", "", "remote HTTP(S) MCP endpoint")
-	timeout := flag.Duration("timeout", 60*time.Second, "request timeout")
-	max := flag.Int("max-message-bytes", 2<<20, "maximum stdio message size")
-	flag.Parse()
-	if *endpoint == "" {
-		fatal("-endpoint is required")
-	}
-	u, e := url.Parse(*endpoint)
-	if e != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		fatal("endpoint must use http or https")
-	}
-	token := os.Getenv("REMOTE_AGENT_TOKEN")
-	if token == "" {
-		fatal("REMOTE_AGENT_TOKEN is required")
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	client := &http.Client{Timeout: *timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return fmt.Errorf("redirects are disabled") }}
-	scan := bufio.NewScanner(os.Stdin)
-	scan.Buffer(make([]byte, 64<<10), *max)
-	out := bufio.NewWriter(os.Stdout)
-	defer out.Flush()
-	for scan.Scan() {
-		line := append([]byte(nil), scan.Bytes()...)
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		req, e := http.NewRequestWithContext(ctx, http.MethodPost, *endpoint, bytes.NewReader(line))
-		if e != nil {
-			fatal(e.Error())
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-		signed, signErr := transportauth.Sign([]byte(token), line, time.Now())
-		if signErr != nil {
-			fatal("request signing failed: " + signErr.Error())
-		}
-		req.Header.Set(transportauth.HeaderTimestamp, signed.Timestamp)
-		req.Header.Set(transportauth.HeaderNonce, signed.Nonce)
-		req.Header.Set(transportauth.HeaderSignature, signed.Signature)
-		req.Header.Set("X-Session-ID", sessionID())
-		resp, e := client.Do(req)
-		if e != nil {
-			writeError(out, "transport error: "+e.Error())
-			continue
-		}
-		body, e := io.ReadAll(io.LimitReader(resp.Body, int64(*max)+1))
-		resp.Body.Close()
-		if e != nil || len(body) > *max {
-			writeError(out, "invalid or oversized remote response")
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
-			writeError(out, fmt.Sprintf("remote HTTP status %d", resp.StatusCode))
-			continue
-		}
-		out.Write(bytes.TrimSpace(body))
-		out.WriteByte('\n')
-		out.Flush()
-	}
-	if e := scan.Err(); e != nil {
-		fatal("stdio read failed: " + e.Error())
+	if err := runCLI(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv); err != nil {
+		fmt.Fprintln(os.Stderr, "stdio-bridge:", err)
+		os.Exit(1)
 	}
 }
-func writeError(w *bufio.Writer, msg string) {
-	fmt.Fprintf(w, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32098,\"message\":%q},\"id\":null}\n", msg)
-	w.Flush()
-}
-func fatal(s string) { fmt.Fprintln(os.Stderr, "stdio-bridge:", s); os.Exit(1) }
-func sessionID() string {
-	if s := os.Getenv("REMOTE_AGENT_SESSION_ID"); s != "" {
-		return s
+
+func runCLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer, getenv func(string) string) error {
+	opts, err := parseFlags(args, errOut)
+	if err != nil {
+		return err
 	}
-	return strings.TrimSpace(fmt.Sprintf("pid-%d", os.Getpid()))
+	if err := validateEndpoint(opts.endpoint, opts.allowPrivateHTTP); err != nil {
+		return err
+	}
+	token := getenv("REMOTE_AGENT_TOKEN")
+	if token == "" {
+		return errors.New("REMOTE_AGENT_TOKEN is required")
+	}
+
+	bridge, err := newBridge(bridgeConfig{
+		Endpoint:         opts.endpoint,
+		Token:            token,
+		Timeout:          opts.timeout,
+		MaxMessageBytes:  opts.maxMessageBytes,
+		MaxResponseBytes: opts.maxResponseBytes,
+		MaxConcurrency:   opts.maxConcurrency,
+		MaxPending:       opts.maxPending,
+		AllowPrivateHTTP: opts.allowPrivateHTTP,
+		SignRequests:     opts.signRequests,
+		BridgeID:         getenv("REMOTE_AGENT_BRIDGE_ID"),
+		SessionID:        configuredSessionID(getenv),
+		Client: &http.Client{
+			Timeout: opts.timeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return errors.New("redirects are disabled")
+			},
+		},
+		Out:    out,
+		ErrOut: errOut,
+	})
+	if err != nil {
+		return err
+	}
+	return bridge.Run(ctx, in)
+}
+
+func parseFlags(args []string, errOut io.Writer) (cliOptions, error) {
+	var opts cliOptions
+	fs := flag.NewFlagSet("stdio-bridge", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	fs.StringVar(&opts.endpoint, "endpoint", "", "remote HTTP(S) MCP endpoint")
+	fs.DurationVar(&opts.timeout, "timeout", 60*time.Second, "request timeout")
+	fs.IntVar(&opts.maxMessageBytes, "max-message-bytes", defaultMaxBytes, "maximum stdio message size")
+	fs.IntVar(&opts.maxResponseBytes, "max-response-bytes", defaultMaxBytes, "maximum remote response size")
+	fs.IntVar(&opts.maxConcurrency, "max-concurrency", 4, "maximum concurrent HTTP requests")
+	fs.IntVar(&opts.maxPending, "max-pending", defaultMaxPending, "maximum pending requests")
+	fs.BoolVar(&opts.allowPrivateHTTP, "allow-private-http", false, "allow HTTP only for localhost or a private IP literal")
+	fs.BoolVar(&opts.signRequests, "sign-requests", false, "add optional HMAC request authentication headers")
+	if err := fs.Parse(args); err != nil {
+		return cliOptions{}, err
+	}
+	if fs.NArg() != 0 {
+		return cliOptions{}, errors.New("unexpected positional arguments")
+	}
+	if opts.endpoint == "" {
+		return cliOptions{}, errors.New("--endpoint is required")
+	}
+	if opts.timeout <= 0 {
+		return cliOptions{}, errors.New("--timeout must be positive")
+	}
+	if opts.maxMessageBytes <= 0 {
+		return cliOptions{}, errors.New("--max-message-bytes must be positive")
+	}
+	if opts.maxResponseBytes <= 0 {
+		return cliOptions{}, errors.New("--max-response-bytes must be positive")
+	}
+	if opts.maxConcurrency <= 0 {
+		return cliOptions{}, errors.New("--max-concurrency must be positive")
+	}
+	if opts.maxPending <= 0 {
+		return cliOptions{}, errors.New("--max-pending must be positive")
+	}
+	if opts.maxPending > maxMaxPending {
+		return cliOptions{}, fmt.Errorf("--max-pending must not exceed %d", maxMaxPending)
+	}
+	return opts, nil
+}
+
+func configuredSessionID(getenv func(string) string) string {
+	return getenv("REMOTE_AGENT_SESSION_ID")
 }
