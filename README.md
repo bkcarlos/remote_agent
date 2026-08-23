@@ -378,8 +378,8 @@ Every push and pull request runs tests, `go vet`, the race detector, Linux sandb
 Pushing a `v*` tag publishes a GitHub Release after every required test and build succeeds:
 
 ```bash
-git tag -a v0.1.0-alpha.1 -m "v0.1.0-alpha.1"
-git push origin v0.1.0-alpha.1
+git tag -a v0.2.0-alpha.1 -m "v0.2.0-alpha.1"
+git push origin v0.2.0-alpha.1
 ```
 
 Release assets contain platform archives and a top-level `SHA256SUMS`. Tags containing `-alpha`, `-beta`, or `-rc` are automatically marked as pre-releases.

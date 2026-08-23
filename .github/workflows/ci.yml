@@ -89,7 +89,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p dist
-          for command in gateway file-worker stdio-bridge install approve; do
+          for command in gateway file-worker network-worker remote-worker exec-worker stdio-bridge install approve; do
             go build -trimpath -o "dist/${command}${{ matrix.ext }}" "./cmd/${command}"
           done
       - name: Generate checksums
