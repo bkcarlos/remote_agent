@@ -138,7 +138,7 @@ func TestNewRejectsInvalidOrMismatchedTargets(t *testing.T) {
 		{
 			name: "invalid claims hash",
 			mutate: func(claims *approval.Claims, _ *DryRun) {
-				claims.Targets[0].AfterSHA256 = strings.ToUpper(afterB)
+				claims.Targets[0].AfterSHA256 = "A" + afterB[1:]
 			},
 		},
 		{

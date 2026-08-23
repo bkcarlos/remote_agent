@@ -6,7 +6,7 @@
 
 当前工作区已把 File、Network、Remote、Exec/Debug/Mem 统一接入标准 MCP Streamable HTTP Gateway。部署模型仍是受控私网中的单用户开发机；不提供 GUI、公网 SaaS、任意 shell、任意 SSH/Network 目标或宿主进程调试。
 
-本批按用户要求只执行了 `gofmt` 和编辑器静态诊断，**没有运行测试或 build**。新增测试代码尚待目标 Linux 环境执行。
+本机可执行的格式检查、单元测试、race、vet、macOS 构建和 Linux amd64 交叉构建已完成；可解析依赖的范围全部通过。完整 Gateway/Remote 依赖图因本机无法下载 `golang.org/x/crypto` 和 `github.com/pkg/sftp` 而阻塞。详细命令、覆盖范围和 Linux/真实客户端待验证项见 `VALIDATION.md`。
 
 ## 本批完成
 
@@ -63,7 +63,7 @@
 - [x] URL host、header值、env值、memory pattern不进入参数audit
 - [x] 错误继续经过敏感值和宿主绝对路径清理
 
-### 测试代码（未执行）
+### 测试代码与本机验证
 
 - [x] dynamic tool list与MCP annotations
 - [x] client-managed apply与审计语义
@@ -74,15 +74,26 @@
 - [x] Network config strict/default deny
 - [x] Exec administrator config strict/workspace字段拒绝
 
-## 仍需验证
+## 验证状态
 
-1. 在Linux执行目标测试与完整测试套件。
-2. 构建 `file-worker`、`network-worker`、`remote-worker`、`exec-worker`、`gateway`。
-3. 在目标内核验证namespace、seccomp、Landlock、openat2和cgroup v2。
-4. 使用目标版本Claude Code、Codex、Zed回放Streamable HTTP、客户端高风险审批和session DELETE。
-5. 使用真实HTTPS/私网HTTP目标验证Network allowlist、redirect、DNS rebinding和下载覆盖冲突。
-6. 使用系统已有SSH key/agent和known_hosts验证Remote profile，不向模型/审计泄漏host、credential path或key。
-7. 验证Registry SIGHUP期间新旧per-workspace Exec supervisor的原子切换和旧进程清理。
+已在 macOS arm64 / Go 1.25.5 完成并通过：
+
+- `gofmt -l cmd internal`
+- 当前提交与 `origin/main..HEAD` 的 `git diff --check`
+- 不依赖缺失 SSH/SFTP 模块的普通测试和 race 测试
+- 同一范围的 `go vet`、macOS build、Linux amd64 cross-build
+- `cmd/stdio-bridge` 的 macOS 与 Linux amd64 build
+
+首次全量测试发现 `internal/approvalview` 测试数据没有实际产生大写哈希；已修正测试并重新通过。
+
+仍需完成：
+
+1. 在可获得 `golang.org/x/crypto v0.36.0` 与 `github.com/pkg/sftp v1.13.7` 的可信模块缓存或网络环境中执行完整 `test/race/vet/build`。
+2. 在目标 Linux 内核实际执行 namespace、seccomp、Landlock、openat2、cgroup v2、Exec lifecycle 和 credential permission 测试。
+3. 使用真实 HTTPS/私网 HTTP、SSH/SFTP 服务以及目标版本 Claude Code、Codex、Zed 完成端到端回放。
+4. 验证 Registry SIGHUP/expiry 期间新旧 per-workspace Exec supervisor 的原子切换和旧进程清理。
+
+完整记录见 `VALIDATION.md`。
 
 ## 重要安全边界
 
