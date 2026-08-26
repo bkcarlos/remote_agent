@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+func TestExecClientTimeoutHonorsSignedSynchronousTaskLimit(t *testing.T) {
+	job := Job{Operation: OperationExecRun, Limits: Limits{TimeoutMillis: 120000}}
+	if got, want := execClientTimeout(30*time.Second, job), 125*time.Second; got != want {
+		t.Fatalf("exec client timeout = %v, want %v", got, want)
+	}
+	job.Operation = OperationProcessStart
+	if got := execClientTimeout(30*time.Second, job); got != 30*time.Second {
+		t.Fatalf("process_start control timeout = %v", got)
+	}
+}
+
 func TestExecClientCancellationInterruptsConnectedSocket(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "exec.sock")
 	listener, err := net.Listen("unix", socketPath)

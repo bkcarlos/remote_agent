@@ -367,6 +367,15 @@ func TestMetadataGlobAndGrep(t *testing.T) {
 		if m := resultMap(t, r); m["isError"] == true {
 			t.Fatalf("%s failed: %+v", tc.name, m)
 		}
+		if tc.name == "glob" || tc.name == "grep" {
+			var payload struct {
+				Scan *workspace.ScanStats `json:"scan"`
+			}
+			toolPayload(t, r, &payload)
+			if payload.Scan == nil || !payload.Scan.Complete || payload.Scan.LimitReason != "" || payload.Scan.FilesScanned != 1 {
+				t.Fatalf("%s scan metadata = %+v", tc.name, payload.Scan)
+			}
+		}
 	}
 }
 

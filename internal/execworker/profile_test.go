@@ -53,6 +53,8 @@ func TestTaskProfileRejectsArbitraryInputs(t *testing.T) {
 func TestTaskProfileDigestIsCanonical(t *testing.T) {
 	left := testProfile()
 	right := testProfile()
+	left.CachePaths = []string{"/tmp/cache-b", "/tmp/cache-a"}
+	right.CachePaths = []string{"/tmp/cache-a", "/tmp/cache-b"}
 	right.EnvAllowlist = []string{"GOCACHE", "GOFLAGS"}
 	right.AllowedArgvPrefixes = [][]string{{"-run"}, {"./..."}}
 	leftDigest, err := left.Digest()
@@ -65,5 +67,27 @@ func TestTaskProfileDigestIsCanonical(t *testing.T) {
 	}
 	if !reflect.DeepEqual(leftDigest, rightDigest) {
 		t.Fatalf("canonical profile digests differ: %s != %s", leftDigest, rightDigest)
+	}
+}
+
+func TestTaskProfileCachePathsRejectContainerSensitiveAndBroadAccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix container-sensitive paths are not applicable")
+	}
+	for _, cachePath := range []string{"relative/cache", "/", "/tmp/cache/../other", "/proc/cache", "/sys/cache", "/dev/cache", "/run/cache", "/var/run/docker.sock"} {
+		profile := testProfile()
+		profile.CachePaths = []string{cachePath}
+		if err := profile.Validate(); err == nil {
+			t.Errorf("accepted unsafe cache path %q", cachePath)
+		}
+	}
+	profile := testProfile()
+	profile.CachePaths = []string{"/tmp/safe-cache", "/tmp/safe-cache"}
+	if err := profile.Validate(); err == nil {
+		t.Fatal("accepted duplicate cache paths")
+	}
+	profile.CachePaths = []string{"/tmp/safe-cache"}
+	if err := profile.Validate(); err != nil {
+		t.Fatalf("rejected safe cache path: %v", err)
 	}
 }

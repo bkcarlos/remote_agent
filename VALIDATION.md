@@ -26,6 +26,16 @@ cgroup:  v2 unified hierarchy
 
 The target did not have Go installed, so source tests were not rerun there. Validation used temporary loopback and private-interface listeners, root-owned transient systemd units, workspaces, credentials, and a dedicated SSH target account. The Gateway itself therefore ran as root for this disposable test; production must use a dedicated unprivileged service account. All temporary units, processes, listeners, files, keys, tunnels, and the account were removed afterward.
 
+## Passed in the Docker development host (`grok.wecan.com.co`)
+
+Validated on 2026-08-27 as unprivileged user `box` inside a Docker container (Linux 6.12.94+, cgroup v2). The container has no effective capabilities, exposes Bazel and Docker CLI, and currently mounts `/var/run/docker.sock`. Nested user/mount/network/PID namespaces are available. Its cgroup root is read-only, so this incremental run used `-exec-production=false`; production cgroup fail-closed behavior remains covered by the production-like host validation below.
+
+- Bazel 7.4.1 ran through a fixed `--batch` Exec profile with only `/home/box/.cache/bazel` and `/home/box/.cache/bazelisk` in `cache_paths`. An offline `genrule` build completed, and the second run reported the target up to date with only one internal action, confirming cache reuse.
+- The JVM worked with isolated loopback plus family-filtered seccomp. Path-addressed `AF_UNIX` remained denied: `docker version` could print client metadata but failed to connect to `/var/run/docker.sock` with `socket: operation not permitted`.
+- A Landlock probe could write its allowlisted cache file while an unallowlisted `/dev/null` write was denied, confirming the cache exception did not disable filesystem confinement.
+- MCP `grep` completely scanned 5,000 files / 2,239,776 bytes in 48–75 ms across repeated runs. A 65 MiB file under the default 64 MiB scan budget returned a successful empty partial result with `complete=false`, `limit_reason=byte_limit`, and `files_skipped=1` rather than an ambiguous empty result.
+- A synchronous Bazel request longer than the old 30-second defaults returned through MCP after extending both supervisor-client and HTTP write deadlines from signed/admin limits.
+
 ## Passed on the Linux integration host
 
 ### Gateway, MCP, File Worker, and sessions

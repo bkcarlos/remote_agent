@@ -23,6 +23,7 @@ type childSpec struct {
 	Env           map[string]string `json:"env,omitempty"`
 	Workspace     string            `json:"workspace"`
 	WorkspaceMode WorkspaceMode     `json:"workspace_mode"`
+	CachePaths    []string          `json:"cache_paths,omitempty"`
 	Limits        Limits            `json:"limits"`
 	Production    bool              `json:"production"`
 }
@@ -74,7 +75,10 @@ func RunExecChild() error {
 	if err := unix.Mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
 		return errors.New("mount child PID namespace procfs")
 	}
-	if err := applyExecLandlock(spec.Executable, spec.Workspace, spec.WorkspaceMode); err != nil && spec.Production {
+	if err := bringExecLoopbackUp(); err != nil {
+		return errors.New("initialize child loopback interface")
+	}
+	if err := applyExecLandlock(spec.Executable, spec.Workspace, spec.WorkspaceMode, spec.CachePaths); err != nil && spec.Production {
 		return errors.New("apply production workspace isolation")
 	}
 	if spec.WorkspaceMode == WorkspaceNone {
@@ -112,6 +116,11 @@ func validateChildSpec(spec childSpec) error {
 	default:
 		return errors.New("invalid exec child workspace mode")
 	}
+	for _, cachePath := range spec.CachePaths {
+		if err := validateCachePath(cachePath); err != nil {
+			return errors.New("invalid exec child cache path")
+		}
+	}
 	for _, arg := range spec.Argv {
 		if strings.IndexByte(arg, 0) >= 0 {
 			return errors.New("invalid exec child argv")
@@ -125,13 +134,34 @@ func validateChildSpec(spec childSpec) error {
 	return nil
 }
 
+func bringExecLoopbackUp() error {
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	request, err := unix.NewIfreq("lo")
+	if err != nil {
+		return err
+	}
+	if err := unix.IoctlIfreq(fd, unix.SIOCGIFFLAGS, request); err != nil {
+		return err
+	}
+	request.SetUint16(request.Uint16() | unix.IFF_UP)
+	return unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, request)
+}
+
 func applyChildRlimits(limits Limits) error {
+	// RLIMIT_AS is intentionally not used as a memory-consumption limit. Go and
+	// JVM runtimes reserve large sparse virtual address ranges, so tying address
+	// space to memory_bytes prevents Docker/Bazel from starting without limiting
+	// actual resident memory. Production mode requires cgroup v2 memory.max and
+	// disabled swap, which enforce the signed physical-memory budget.
 	values := []struct {
 		resource int
 		value    uint64
 	}{
 		{unix.RLIMIT_CPU, uint64(limits.CPUSeconds)},
-		{unix.RLIMIT_AS, uint64(limits.MemoryBytes)},
 		{unix.RLIMIT_NPROC, uint64(limits.PIDs)},
 		{unix.RLIMIT_NOFILE, 256},
 		{unix.RLIMIT_CORE, 0},
@@ -158,8 +188,6 @@ func applyExecSeccomp() error {
 		return err
 	}
 	denied := []uint32{
-		unix.SYS_SOCKET, unix.SYS_SOCKETPAIR, unix.SYS_CONNECT, unix.SYS_BIND,
-		unix.SYS_LISTEN, unix.SYS_ACCEPT, unix.SYS_ACCEPT4,
 		unix.SYS_PTRACE, unix.SYS_PROCESS_VM_WRITEV, unix.SYS_MOUNT, unix.SYS_UMOUNT2,
 		unix.SYS_PIVOT_ROOT, unix.SYS_CHROOT, unix.SYS_BPF, unix.SYS_PERF_EVENT_OPEN,
 		unix.SYS_KEYCTL, unix.SYS_ADD_KEY, unix.SYS_REQUEST_KEY,
@@ -170,6 +198,18 @@ func applyExecSeccomp() error {
 		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 4},
 		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 1, K: arch},
 		{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_KILL_PROCESS},
+		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0},
+		// JVM/Bazel needs IP and netlink sockets to inspect the isolated loopback
+		// interface. Path-addressed AF_UNIX (including Docker/Podman sockets),
+		// AF_PACKET, and every other socket family remain denied. Anonymous
+		// socketpair is allowed for JVM/process-local wakeups and cannot connect
+		// to an existing daemon path. The child inherits no socket FDs.
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 5, K: unix.SYS_SOCKET},
+		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 16},
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 3, K: unix.AF_INET},
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 2, K: unix.AF_INET6},
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 1, K: unix.AF_NETLINK},
+		{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
 		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0},
 	}
 	for _, number := range denied {

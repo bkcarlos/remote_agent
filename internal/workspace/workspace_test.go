@@ -99,6 +99,43 @@ func TestInfoGlobAndGrep(t *testing.T) {
 	}
 }
 
+func TestDetailedScansReportCompletenessAndLimitReason(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.txt", "needle one\nneedle two\n")
+	write("b.txt", "no match\n")
+	fsys, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	complete, err := fsys.GrepScan(".", "missing", 10, 10, 1024)
+	if err != nil || !complete.Scan.Complete || complete.Scan.LimitReason != "" || len(complete.Matches) != 0 || complete.Scan.FilesScanned != 2 {
+		t.Fatalf("complete empty grep = %+v, %v", complete, err)
+	}
+	byResults, err := fsys.GrepScan(".", "needle", 10, 1, 1024)
+	if err != nil || byResults.Scan.Complete || byResults.Scan.LimitReason != ScanLimitResults || len(byResults.Matches) != 1 {
+		t.Fatalf("result-limited grep = %+v, %v", byResults, err)
+	}
+	byBytes, err := fsys.GrepScan(".", "needle", 10, 10, 4)
+	if err != nil || byBytes.Scan.Complete || byBytes.Scan.LimitReason != ScanLimitBytes || byBytes.Scan.FilesSkipped != 1 || byBytes.Scan.BytesScanned != 0 {
+		t.Fatalf("byte-limited grep = %+v, %v", byBytes, err)
+	}
+	byFiles, err := fsys.GlobScan(".", "*.txt", 1, 10)
+	if err != nil || byFiles.Scan.Complete || byFiles.Scan.LimitReason != ScanLimitFiles || len(byFiles.Paths) != 1 {
+		t.Fatalf("file-limited glob = %+v, %v", byFiles, err)
+	}
+	byGlobResults, err := fsys.GlobScan(".", "*.txt", 10, 1)
+	if err != nil || byGlobResults.Scan.Complete || byGlobResults.Scan.LimitReason != ScanLimitResults || len(byGlobResults.Paths) != 1 {
+		t.Fatalf("result-limited glob = %+v, %v", byGlobResults, err)
+	}
+}
+
 func TestRejectTraversalAbsoluteAndSymlink(t *testing.T) {
 	f, d := setup(t)
 	for _, p := range []string{"../secret", filepath.Join(string(filepath.Separator), "tmp", "x"), "", "x\x00y"} {

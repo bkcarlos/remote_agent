@@ -62,6 +62,16 @@ func TestPrivateListen(t *testing.T) {
 	}
 }
 
+func TestGatewayWriteTimeoutCoversWorkerAndSynchronousExecLimits(t *testing.T) {
+	config := execworker.AdministratorConfig{Profiles: []execworker.TaskProfile{{Limits: execworker.Limits{TimeoutMillis: 180000}}}}
+	if got, want := gatewayWriteTimeout(30*time.Second, config), 185*time.Second; got != want {
+		t.Fatalf("gateway write timeout = %v, want %v", got, want)
+	}
+	if got, want := gatewayWriteTimeout(240*time.Second, config), 245*time.Second; got != want {
+		t.Fatalf("worker-dominated write timeout = %v, want %v", got, want)
+	}
+}
+
 func TestWorkspacePolicyReadOnlyAndDeniedNamesOnlyRestrict(t *testing.T) {
 	global := policy.Config{AllowWrite: true, AllowNetwork: true, DeniedNames: []string{"global-secret"}}
 	readOnly := workspaceregistry.WorkspaceConfig{

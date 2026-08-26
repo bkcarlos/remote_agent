@@ -76,6 +76,8 @@ Gateway 不直接打开 workspace 文件。它只通过 File Executor 完成文�
 
 `read_binary` 是有界、capability-scoped 的内部操作，不注册为 MCP 工具。其 base64 只存在于 Gateway↔File Worker 协议，Gateway立即验证长度/SHA-256并解码。File Worker raw 上限和 Gateway workspace transfer 上限均为 2 MiB；Gateway再取 workspace policy 与 Network profile limit 的最小值并拒绝超限。Network Worker自身仍保留 16 MiB硬上限。`write_file` 已支持原始 bytes，因此 Network/Remote 不需要本地路径。
 
+`grep` 的 aggregate scan budget 与单文件返回上限分离（默认分别为 64 MiB 和 1 MiB）。`glob`/`grep` 成功响应始终携带结构化 scan 状态：是否完整、触发的 file/depth/byte/result limit、扫描/跳过文件数和扫描字节数。达到资源上限返回有标记的部分结果，不再让客户端把“不完整的空结果”误认为完整未命中。安全遍历已验证的路径通过第二次 `openat2` 直接读取，避免每个文件重复逐级 `lstat`。
+
 ### Network
 
 ```mermaid
@@ -115,6 +117,8 @@ Exec 仅 Linux。管理员文件只有 `version` 和固定 Task profiles，不�
 Launcher创建 `0700` 临时目录以及 `0600` runtime config、socket、cookie、public key和日志，并在 delegated cgroup root 下为每个 workspace runtime创建随机独立子树，等待 socket ready 后才发布 Gateway。staging/reload只清理自己的子树，不扫描或 kill旧 runtime。`Revoke`/`Close` 终止 supervisor和Agent children并清理目录。
 
 MCP不接受 executable、shell 或 client limits。Gateway使用 profile固定 `Limits`，将 MCP request 绑定到 `task_id`，并用当前 workspace的 `execworker.CapabilitySigner` 为每个 Job签名。
+
+管理员 profile 可声明最多 16 个 `cache_paths`。这些路径进入 canonical profile digest，由 Landlock 赋予读写权限；执行时必须是无 symlink component、service user 自有且非 group/world-writable 的目录。`/`、`/proc`、`/sys`、`/dev`、`/run`、`/var/run` 永久拒绝。Exec 在独立 network namespace 中只允许 `AF_INET`/`AF_INET6`/`AF_NETLINK`，用于 JVM/Bazel 枚举和使用隔离 loopback；可寻址的 `AF_UNIX` 与 `AF_PACKET` 仍由 seccomp 拒绝。匿名 `socketpair` 只用于 JVM 进程内 wakeup，无法连接 daemon path。因此 Bazel 采用 `--batch` 复用磁盘缓存而不开放 client/server Unix socket。容器内部署不降级 namespace/Landlock/seccomp；外层 runtime 不支持嵌套 namespace 时 fail closed。Docker daemon socket 等价宿主高权限，不能挂入 Gateway 容器；Worker 的 socket deny 不能保护已被攻陷的 Gateway 父进程。
 
 Capability仍严格绑定当前请求 `task_id`。Process ID是 supervisor-issued opaque handle；后续 Process/Debug/Mem ownership只绑定 principal/session/workspace/profile/opaque process handle，并在真实 PID 操作前验证 `/proc` starttime，不再复用启动请求 `task_id`。Debug/Mem只能操作同一 session 创建的 Agent child。`mem_scan` 仅接受 pattern/mode/include_context，无地址参数、无写内存。尚未全面使用 pidfd，因此 PID signal reuse 仍是残余风险。
 

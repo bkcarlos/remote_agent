@@ -139,7 +139,7 @@ func secureWalkFilesWithDepth(root, rel string, denied map[string]bool, maxFiles
 				continue
 			}
 			if depth+1 > maxDepth {
-				return ErrLimitExceeded
+				return errTraversalDepthLimit
 			}
 			if isDir {
 				fd, openErr := unix.Openat2(int(dir.Fd()), name, &unix.OpenHow{
@@ -159,7 +159,7 @@ func secureWalkFilesWithDepth(root, rel string, denied map[string]bool, maxFiles
 			}
 			count++
 			if count > maxFiles {
-				return ErrLimitExceeded
+				return errTraversalFileLimit
 			}
 			if visitErr := visit(entryPath); visitErr != nil {
 				return visitErr

@@ -31,7 +31,7 @@ func execLandlockABI() (uintptr, error) {
 	return 0, errno
 }
 
-func applyExecLandlock(executable, workspace string, mode WorkspaceMode) error {
+func applyExecLandlock(executable, workspace string, mode WorkspaceMode, cachePaths []string) error {
 	abi, err := execLandlockABI()
 	if err != nil {
 		return err
@@ -72,21 +72,27 @@ func applyExecLandlock(executable, workspace string, mode WorkspaceMode) error {
 			return err
 		}
 	}
+	readWriteAccess := readAccess | uint64(unix.LANDLOCK_ACCESS_FS_WRITE_FILE|unix.LANDLOCK_ACCESS_FS_REMOVE_DIR|
+		unix.LANDLOCK_ACCESS_FS_REMOVE_FILE|unix.LANDLOCK_ACCESS_FS_MAKE_DIR|
+		unix.LANDLOCK_ACCESS_FS_MAKE_REG|unix.LANDLOCK_ACCESS_FS_MAKE_SOCK|
+		unix.LANDLOCK_ACCESS_FS_MAKE_FIFO|unix.LANDLOCK_ACCESS_FS_MAKE_SYM)
+	if abi >= 2 {
+		readWriteAccess |= unix.LANDLOCK_ACCESS_FS_REFER
+	}
+	if abi >= 3 {
+		readWriteAccess |= unix.LANDLOCK_ACCESS_FS_TRUNCATE
+	}
 	if mode != WorkspaceNone {
 		workspaceAccess := readAccess
 		if mode == WorkspaceReadWrite {
-			workspaceAccess |= uint64(unix.LANDLOCK_ACCESS_FS_WRITE_FILE | unix.LANDLOCK_ACCESS_FS_REMOVE_DIR |
-				unix.LANDLOCK_ACCESS_FS_REMOVE_FILE | unix.LANDLOCK_ACCESS_FS_MAKE_DIR |
-				unix.LANDLOCK_ACCESS_FS_MAKE_REG | unix.LANDLOCK_ACCESS_FS_MAKE_SOCK |
-				unix.LANDLOCK_ACCESS_FS_MAKE_FIFO | unix.LANDLOCK_ACCESS_FS_MAKE_SYM)
-			if abi >= 2 {
-				workspaceAccess |= unix.LANDLOCK_ACCESS_FS_REFER
-			}
-			if abi >= 3 {
-				workspaceAccess |= unix.LANDLOCK_ACCESS_FS_TRUNCATE
-			}
+			workspaceAccess = readWriteAccess
 		}
 		if err := addExecLandlockPath(ruleset, workspace, workspaceAccess); err != nil {
+			return err
+		}
+	}
+	for _, cachePath := range cachePaths {
+		if err := addExecLandlockCachePath(ruleset, cachePath, readWriteAccess); err != nil {
 			return err
 		}
 	}
@@ -120,6 +126,32 @@ func addExecLandlockPath(ruleset int, path string, access uint64) error {
 		return err
 	}
 	defer unix.Close(fd)
+	return addExecLandlockPathFD(ruleset, fd, access)
+}
+
+func addExecLandlockCachePath(ruleset int, path string, access uint64) error {
+	if err := validateCachePath(path); err != nil {
+		return err
+	}
+	fd, err := unix.Openat2(unix.AT_FDCWD, path, &unix.OpenHow{
+		Flags:   unix.O_PATH | unix.O_DIRECTORY | unix.O_CLOEXEC,
+		Resolve: unix.RESOLVE_NO_SYMLINKS | unix.RESOLVE_NO_MAGICLINKS,
+	})
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR || int(stat.Uid) != os.Geteuid() || stat.Mode&0o022 != 0 {
+		return errors.New("exec cache path must be an owner-only-writable directory owned by the service user")
+	}
+	return addExecLandlockPathFD(ruleset, fd, access)
+}
+
+func addExecLandlockPathFD(ruleset, fd int, access uint64) error {
 	rule := execPathBeneathAttr{AllowedAccess: access, ParentFD: int32(fd)}
 	_, _, errno := unix.Syscall6(unix.SYS_LANDLOCK_ADD_RULE, uintptr(ruleset), 1, uintptr(unsafe.Pointer(&rule)), 0, 0, 0)
 	if errno != 0 {

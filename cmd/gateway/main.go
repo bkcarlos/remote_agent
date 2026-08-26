@@ -272,7 +272,7 @@ func main() {
 		}
 	}
 
-	h := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	h := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: gatewayWriteTimeout(*workerTimeout, configuredExec), IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	log.Printf("gateway listening on %s (%s), instance=%s", *addr, transport(*cert), instanceID)
 	if *cert != "" && *key != "" {
 		err = h.ListenAndServeTLS(*cert, *key)
@@ -281,6 +281,24 @@ func main() {
 	}
 	log.Fatal(err)
 }
+func gatewayWriteTimeout(workerTimeout time.Duration, execConfig execworker.AdministratorConfig) time.Duration {
+	timeout := 30 * time.Second
+	if workerTimeout > timeout {
+		timeout = workerTimeout
+	}
+	for _, profile := range execConfig.Profiles {
+		candidate := time.Duration(profile.Limits.TimeoutMillis) * time.Millisecond
+		if candidate > timeout {
+			timeout = candidate
+		}
+	}
+	const responseGrace = 5 * time.Second
+	if timeout > time.Duration(1<<63-1)-responseGrace {
+		return timeout
+	}
+	return timeout + responseGrace
+}
+
 func gatewayHandler(handler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle(gateway.DefaultEndpoint, handler)

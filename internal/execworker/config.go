@@ -64,6 +64,7 @@ func (config AdministratorConfig) ProfileMap() map[string]TaskProfile {
 		copy.FixedArgv = append([]string(nil), profile.FixedArgv...)
 		copy.AllowedArgvPrefixes = clonePrefixes(profile.AllowedArgvPrefixes)
 		copy.EnvAllowlist = append([]string(nil), profile.EnvAllowlist...)
+		copy.CachePaths = append([]string(nil), profile.CachePaths...)
 		profiles[profile.Name] = copy
 	}
 	return profiles

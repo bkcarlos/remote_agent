@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -31,6 +32,38 @@ type Match struct {
 	Line int    `json:"line"`
 	Text string `json:"text"`
 }
+
+const (
+	ScanLimitFiles   = "file_limit"
+	ScanLimitDepth   = "depth_limit"
+	ScanLimitBytes   = "byte_limit"
+	ScanLimitResults = "result_limit"
+)
+
+// ScanStats tells callers whether an empty or partial result represents a
+// complete search. LimitReason is set only when Complete is false.
+type ScanStats struct {
+	Complete     bool   `json:"complete"`
+	LimitReason  string `json:"limit_reason,omitempty"`
+	FilesScanned int    `json:"files_scanned"`
+	FilesSkipped int    `json:"files_skipped"`
+	BytesScanned int64  `json:"bytes_scanned"`
+}
+
+type GlobScanResult struct {
+	Paths []string  `json:"paths"`
+	Scan  ScanStats `json:"scan"`
+}
+
+type GrepScanResult struct {
+	Matches []Match   `json:"matches"`
+	Scan    ScanStats `json:"scan"`
+}
+
+var (
+	errScanByteLimit   = errors.New("scan byte limit reached")
+	errScanResultLimit = errors.New("scan result limit reached")
+)
 
 func New(root string) (*FS, error) {
 	return NewWithDenied(root, nil)
@@ -169,6 +202,46 @@ func (f *FS) ReadFile(rel string, max int64) ([]byte, error) {
 	}
 	return data, nil
 }
+
+// readWalkedFile opens a path already produced by the secure walker. openat2
+// (or the checked non-Linux equivalent) repeats the kernel-enforced boundary,
+// while avoiding resolve's per-component lstat loop for every scanned file.
+func (f *FS) readWalkedFile(rel string, max int64) ([]byte, int64, error) {
+	if max < 0 {
+		return nil, 0, ErrLimitExceeded
+	}
+	h, err := secureOpen(f.root, rel, false)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer h.Close()
+	st, err := h.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, st.Size(), ErrInvalidFileType
+	}
+	if hasMultipleLinks(st) {
+		return nil, st.Size(), ErrUnsafeFile
+	}
+	if st.Size() > max {
+		return nil, st.Size(), ErrLimitExceeded
+	}
+	limit := max + 1
+	if max == math.MaxInt64 {
+		limit = max
+	}
+	data, err := io.ReadAll(io.LimitReader(h, limit))
+	if err != nil {
+		return nil, st.Size(), err
+	}
+	if int64(len(data)) > max {
+		return nil, int64(len(data)), ErrLimitExceeded
+	}
+	return data, st.Size(), nil
+}
+
 func (f *FS) List(rel string, max int) ([]string, error) {
 	if rel == "" {
 		rel = "."
@@ -262,27 +335,50 @@ func validateGlobPattern(pattern string) (string, error) {
 }
 
 func (f *FS) Glob(rel, pattern string, maxFiles, maxResults int) ([]string, error) {
-	return f.GlobWithDepth(rel, pattern, maxFiles, maxResults, DefaultMaxTraversalDepth)
+	result, err := f.GlobScanWithDepth(rel, pattern, maxFiles, maxResults, DefaultMaxTraversalDepth)
+	if err != nil {
+		return result.Paths, err
+	}
+	if !result.Scan.Complete {
+		return result.Paths, safeError("glob", ErrLimitExceeded)
+	}
+	return result.Paths, nil
 }
 
 // GlobWithDepth is Glob with an explicit maximum traversal depth.
 func (f *FS) GlobWithDepth(rel, pattern string, maxFiles, maxResults, maxDepth int) ([]string, error) {
+	result, err := f.GlobScanWithDepth(rel, pattern, maxFiles, maxResults, maxDepth)
+	if err != nil {
+		return result.Paths, err
+	}
+	if !result.Scan.Complete {
+		return result.Paths, safeError("glob", ErrLimitExceeded)
+	}
+	return result.Paths, nil
+}
+
+func (f *FS) GlobScan(rel, pattern string, maxFiles, maxResults int) (GlobScanResult, error) {
+	return f.GlobScanWithDepth(rel, pattern, maxFiles, maxResults, DefaultMaxTraversalDepth)
+}
+
+func (f *FS) GlobScanWithDepth(rel, pattern string, maxFiles, maxResults, maxDepth int) (GlobScanResult, error) {
+	result := GlobScanResult{Scan: ScanStats{Complete: true}}
 	pattern, err := validateGlobPattern(pattern)
 	if err != nil {
-		return nil, safeError("glob", err)
+		return result, safeError("glob", err)
 	}
 	if maxResults < 0 {
-		return nil, safeError("glob", ErrLimitExceeded)
+		return result, safeError("glob", ErrLimitExceeded)
 	}
 	if rel == "" {
 		rel = "."
 	}
 	normalizedRel, err := NormalizePath(rel)
 	if err != nil {
-		return nil, safeError("glob", err)
+		return result, safeError("glob", err)
 	}
-	var results []string
 	err = f.walkFilesWithDepth(rel, maxFiles, maxDepth, func(filePath string) error {
+		result.Scan.FilesScanned++
 		candidate := filePath
 		if normalizedRel != "." {
 			candidate = strings.TrimPrefix(filePath, strings.TrimSuffix(normalizedRel, "/")+"/")
@@ -291,65 +387,122 @@ func (f *FS) GlobWithDepth(rel, pattern string, maxFiles, maxResults, maxDepth i
 		if matchErr != nil {
 			return ErrInvalidPattern
 		}
-		if matched {
-			results = append(results, filePath)
-			if len(results) > maxResults {
-				return ErrLimitExceeded
-			}
+		if !matched {
+			return nil
 		}
+		if len(result.Paths) == maxResults {
+			return errScanResultLimit
+		}
+		result.Paths = append(result.Paths, filePath)
 		return nil
 	})
-	sort.Strings(results)
-	if err != nil {
-		return results, safeError("glob", err)
+	sort.Strings(result.Paths)
+	switch {
+	case err == nil:
+		return result, nil
+	case errors.Is(err, errScanResultLimit):
+		result.Scan.Complete, result.Scan.LimitReason = false, ScanLimitResults
+		return result, nil
+	case errors.Is(err, errTraversalFileLimit):
+		result.Scan.Complete, result.Scan.LimitReason = false, ScanLimitFiles
+		return result, nil
+	case errors.Is(err, errTraversalDepthLimit):
+		result.Scan.Complete, result.Scan.LimitReason = false, ScanLimitDepth
+		return result, nil
+	default:
+		return result, safeError("glob", err)
 	}
-	return results, nil
 }
 
 func (f *FS) Grep(rel, query string, maxFiles, maxMatches int, maxBytes int64) ([]Match, error) {
-	return f.GrepWithDepth(rel, query, maxFiles, maxMatches, maxBytes, DefaultMaxTraversalDepth)
+	result, err := f.GrepScanWithDepth(rel, query, maxFiles, maxMatches, maxBytes, DefaultMaxTraversalDepth)
+	if err != nil {
+		return result.Matches, err
+	}
+	if !result.Scan.Complete {
+		return result.Matches, safeError("grep", ErrLimitExceeded)
+	}
+	return result.Matches, nil
 }
 
 // GrepWithDepth is Grep with an explicit maximum traversal depth.
 func (f *FS) GrepWithDepth(rel, query string, maxFiles, maxMatches int, maxBytes int64, maxDepth int) ([]Match, error) {
+	result, err := f.GrepScanWithDepth(rel, query, maxFiles, maxMatches, maxBytes, maxDepth)
+	if err != nil {
+		return result.Matches, err
+	}
+	if !result.Scan.Complete {
+		return result.Matches, safeError("grep", ErrLimitExceeded)
+	}
+	return result.Matches, nil
+}
+
+func (f *FS) GrepScan(rel, query string, maxFiles, maxMatches int, maxBytes int64) (GrepScanResult, error) {
+	return f.GrepScanWithDepth(rel, query, maxFiles, maxMatches, maxBytes, DefaultMaxTraversalDepth)
+}
+
+func (f *FS) GrepScanWithDepth(rel, query string, maxFiles, maxMatches int, maxBytes int64, maxDepth int) (GrepScanResult, error) {
+	result := GrepScanResult{Scan: ScanStats{Complete: true}}
 	if query == "" {
-		return nil, safeError("grep", ErrInvalidPattern)
+		return result, safeError("grep", ErrInvalidPattern)
 	}
 	if maxMatches < 0 || maxBytes < 0 {
-		return nil, safeError("grep", ErrLimitExceeded)
+		return result, safeError("grep", ErrLimitExceeded)
 	}
-	var matches []Match
-	var total int64
+	queryBytes := []byte(query)
 	err := f.walkFilesWithDepth(rel, maxFiles, maxDepth, func(filePath string) error {
-		remaining := maxBytes - total
+		remaining := maxBytes - result.Scan.BytesScanned
 		if remaining <= 0 {
-			return ErrLimitExceeded
+			return errScanByteLimit
 		}
-		data, readErr := f.ReadFile(filePath, remaining)
+		data, _, readErr := f.readWalkedFile(filePath, remaining)
 		if readErr != nil {
-			if errors.Is(readErr, ErrLimitExceeded) || errors.Is(readErr, ErrInvalidFileType) || errors.Is(readErr, ErrUnsafeFile) {
+			switch {
+			case errors.Is(readErr, ErrLimitExceeded):
+				result.Scan.FilesSkipped++
+				return errScanByteLimit
+			case errors.Is(readErr, ErrInvalidFileType), errors.Is(readErr, ErrUnsafeFile):
+				result.Scan.FilesSkipped++
 				return nil
+			default:
+				return readErr
 			}
-			return readErr
 		}
-		total += int64(len(data))
-		if strings.IndexByte(string(data), 0) >= 0 {
+		result.Scan.FilesScanned++
+		result.Scan.BytesScanned += int64(len(data))
+		if bytes.IndexByte(data, 0) >= 0 {
+			result.Scan.FilesSkipped++
 			return nil
 		}
-		for i, line := range strings.Split(string(data), "\n") {
-			if strings.Contains(line, query) {
-				matches = append(matches, Match{Path: filePath, Line: i + 1, Text: line})
-				if len(matches) > maxMatches {
-					return ErrLimitExceeded
-				}
+		for i, line := range bytes.Split(data, []byte{'\n'}) {
+			if !bytes.Contains(line, queryBytes) {
+				continue
 			}
+			if len(result.Matches) == maxMatches {
+				return errScanResultLimit
+			}
+			result.Matches = append(result.Matches, Match{Path: filePath, Line: i + 1, Text: string(line)})
 		}
 		return nil
 	})
-	if err != nil {
-		return matches, safeError("grep", err)
+	switch {
+	case err == nil:
+		return result, nil
+	case errors.Is(err, errScanResultLimit):
+		result.Scan.Complete, result.Scan.LimitReason = false, ScanLimitResults
+		return result, nil
+	case errors.Is(err, errScanByteLimit):
+		result.Scan.Complete, result.Scan.LimitReason = false, ScanLimitBytes
+		return result, nil
+	case errors.Is(err, errTraversalFileLimit):
+		result.Scan.Complete, result.Scan.LimitReason = false, ScanLimitFiles
+		return result, nil
+	case errors.Is(err, errTraversalDepthLimit):
+		result.Scan.Complete, result.Scan.LimitReason = false, ScanLimitDepth
+		return result, nil
+	default:
+		return result, safeError("grep", err)
 	}
-	return matches, nil
 }
 
 func (f *FS) Checksum(rel string) (string, error) {

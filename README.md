@@ -212,6 +212,7 @@ Exec is Linux-only. Administrator configuration cannot contain workspace identit
       "allowed_argv_prefixes": [],
       "workspace_mode": "read_only",
       "env_allowlist": [],
+      "cache_paths": [],
       "limits": {
         "timeout_ms": 30000,
         "cpu_seconds": 30,
@@ -228,6 +229,12 @@ Exec is Linux-only. Administrator configuration cannot contain workspace identit
 ```
 
 MCP never accepts an executable or shell string. `exec_run`/`process_start` select a fixed profile and optional administrator-constrained argv/env. Every capability remains bound to the current request `TaskID`; after launch, Process/Debug/Mem ownership uses only authenticated principal, MCP session, workspace, profile, opaque `process_id`, and verified PID starttime, so a later request does not need the launch request ID. `mem_scan` accepts only `pattern`, `mode`, and `include_context`; it accepts no address and cannot write memory. Debug/Mem can operate only on Agent children created in the same session. Signals currently verify `/proc` PID starttime but do not use pidfd on every path, so PID signal reuse remains a documented residual risk.
+
+`cache_paths` is an administrator-only allowlist of up to 16 clean absolute cache directories. Each directory is granted read/write Landlock access and is included in the canonical profile digest that capabilities bind. At execution time it must exist without symlink components, be owned by the Gateway service user, and not be group/world writable. Filesystem root and container-sensitive trees under `/proc`, `/sys`, `/dev`, `/run`, and `/var/run` are always rejected. For example, a Bazel profile can allow `/home/agent/.cache/bazel` and set a fixed `--batch` startup option. Batch mode is required because normal Bazel client/server mode uses Unix sockets. Inside its private network namespace, Exec allows only `AF_INET`, `AF_INET6`, and `AF_NETLINK` so JVM/Bazel can inspect and use isolated loopback. Path-addressed `AF_UNIX` and `AF_PACKET` remain denied; anonymous `socketpair` is allowed only for process-local JVM wakeups and cannot connect to a daemon path. Thus a mounted Docker/Podman/containerd socket cannot become a container escape. Set Bazel temporary/output/cache options to the workspace or an allowed cache directory rather than broadening filesystem access.
+
+Exec does not use `RLIMIT_AS` for `memory_bytes`: Go and JVM runtimes reserve large sparse address ranges, so address-space limits reject healthy Docker/Bazel processes without measuring resident memory. Production Exec therefore requires delegated cgroup v2 and enforces `memory.max` plus disabled swap. Synchronous supervisor and HTTP response deadlines automatically cover the administrator profile's `timeout_ms` (plus bounded response grace), so tasks longer than 30 seconds are not cut off by control-plane defaults.
+
+Running Gateway inside a developer container is supported only when the outer runtime permits the nested user, mount, network, PID, IPC, and UTS namespaces used by every Exec child. There is no container-specific isolation downgrade: inability to create those namespaces or apply production Landlock/seccomp fails the job. Do not mount the Docker daemon socket into the Gateway container. Possession of `/var/run/docker.sock` is effectively host-root authority for a compromised Gateway process even though sandboxed File/Exec children cannot create path-addressed Unix sockets. If an existing development image already mounts it, remove the mount or place Gateway in a separate sidecar/container without runtime credentials.
 
 ### Combined startup example
 
@@ -310,7 +317,7 @@ The Gateway accepts strict JSON policy layers in this order:
 administrator > deployment > project > command-line capability
 ```
 
-Each loaded layer can only disable `allow_write`, `allow_network`, `allow_remote`, `allow_exec`, `allow_debug`, or `allow_mem`, lower byte limits, or add denied names. It cannot enable a capability or increase a limit disabled by a higher effective layer. All capability switches default false. Unknown fields, invalid limits, path-shaped denied names, and trailing JSON are rejected at startup.
+Each loaded layer can only disable `allow_write`, `allow_network`, `allow_remote`, `allow_exec`, `allow_debug`, or `allow_mem`, lower byte limits, or add denied names. It cannot enable a capability or increase a limit disabled by a higher effective layer. `max_read_bytes` bounds returned single/multi-file content (default 1 MiB), while the independent `max_scan_bytes` bounds aggregate grep input (default 64 MiB); this prevents output sizing from silently turning into a tiny repository scan budget. All capability switches default false. Unknown fields, invalid limits, path-shaped denied names, and trailing JSON are rejected at startup.
 
 ```bash
 bin/gateway ... \
@@ -331,8 +338,8 @@ The Gateway exposes policy- and configuration-filtered tools dynamically. Every 
 - `list_dir`: bounded directory listing with policy-denied names removed
 - `checksum`: SHA-256 calculation
 - `file_info`: metadata without host absolute paths
-- `glob`: bounded relative-pattern file discovery
-- `grep`: bounded text search that skips symlinks, binary content, policy-denied names, and `.gitignore` matches
+- `glob`: bounded relative-pattern file discovery with structured scan completeness and limit reason
+- `grep`: bounded text search that skips symlinks, binary content, policy-denied names, and `.gitignore` matches, and returns `scan.complete`, `scan.limit_reason`, file counts, and scanned bytes
 - `diff`: bounded unified diff against decoded text
 - `edit`: exact single-file replacement with preview, approval, encoding/BOM/newline/permission preservation, and optional `adapt_indentation`
 - `multi_edit`: preflight and approved editing of up to 20 files

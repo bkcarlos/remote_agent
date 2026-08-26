@@ -25,6 +25,7 @@ type Decision struct {
 
 type Config struct {
 	MaxReadBytes  int64
+	MaxScanBytes  int64
 	MaxWriteBytes int64
 	DeniedNames   []string
 	AllowWrite    bool
@@ -39,6 +40,9 @@ type Engine struct{ cfg Config }
 func New(c Config) *Engine {
 	if c.MaxReadBytes <= 0 {
 		c.MaxReadBytes = 1 << 20
+	}
+	if c.MaxScanBytes <= 0 {
+		c.MaxScanBytes = 64 << 20
 	}
 	if c.MaxWriteBytes <= 0 {
 		c.MaxWriteBytes = 1 << 20
@@ -56,6 +60,7 @@ func New(c Config) *Engine {
 	return &Engine{cfg: c}
 }
 func (e *Engine) MaxReadBytes() int64   { return e.cfg.MaxReadBytes }
+func (e *Engine) MaxScanBytes() int64   { return e.cfg.MaxScanBytes }
 func (e *Engine) MaxWriteBytes() int64  { return e.cfg.MaxWriteBytes }
 func (e *Engine) DeniedNames() []string { return append([]string(nil), e.cfg.DeniedNames...) }
 func (e *Engine) Evaluate(tool, path string) Decision {

@@ -21,6 +21,7 @@ type Document struct {
 	AllowDebug    *bool    `json:"allow_debug,omitempty"`
 	AllowMem      *bool    `json:"allow_mem,omitempty"`
 	MaxReadBytes  *int64   `json:"max_read_bytes,omitempty"`
+	MaxScanBytes  *int64   `json:"max_scan_bytes,omitempty"`
 	MaxWriteBytes *int64   `json:"max_write_bytes,omitempty"`
 	DeniedNames   []string `json:"denied_names,omitempty"`
 }
@@ -49,6 +50,9 @@ func ParseDocument(b []byte) (Document, error) {
 	}
 	if d.MaxReadBytes != nil && *d.MaxReadBytes <= 0 {
 		return Document{}, errors.New("max_read_bytes must be positive")
+	}
+	if d.MaxScanBytes != nil && *d.MaxScanBytes <= 0 {
+		return Document{}, errors.New("max_scan_bytes must be positive")
 	}
 	if d.MaxWriteBytes != nil && *d.MaxWriteBytes <= 0 {
 		return Document{}, errors.New("max_write_bytes must be positive")
@@ -84,6 +88,9 @@ func Restrict(base Config, d Document) Config {
 	}
 	if d.MaxReadBytes != nil && (base.MaxReadBytes <= 0 || *d.MaxReadBytes < base.MaxReadBytes) {
 		base.MaxReadBytes = *d.MaxReadBytes
+	}
+	if d.MaxScanBytes != nil && (base.MaxScanBytes <= 0 || *d.MaxScanBytes < base.MaxScanBytes) {
+		base.MaxScanBytes = *d.MaxScanBytes
 	}
 	if d.MaxWriteBytes != nil && (base.MaxWriteBytes <= 0 || *d.MaxWriteBytes < base.MaxWriteBytes) {
 		base.MaxWriteBytes = *d.MaxWriteBytes

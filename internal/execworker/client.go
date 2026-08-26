@@ -18,10 +18,7 @@ func (c Client) Do(ctx context.Context, job Job) (Response, error) {
 	if c.SocketPath == "" || c.Cookie == "" {
 		return response, errors.New("exec supervisor client is not configured")
 	}
-	timeout := c.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
+	timeout := execClientTimeout(c.Timeout, job)
 	dialer := net.Dialer{Timeout: timeout}
 	connection, err := dialer.DialContext(ctx, "unix", c.SocketPath)
 	if err != nil {
@@ -56,4 +53,18 @@ func (c Client) Do(ctx context.Context, job Job) (Response, error) {
 		return response, errors.New(response.Error)
 	}
 	return response, nil
+}
+
+func execClientTimeout(configured time.Duration, job Job) time.Duration {
+	if configured <= 0 {
+		configured = 30 * time.Second
+	}
+	if job.Operation != OperationExecRun || job.Limits.TimeoutMillis <= 0 {
+		return configured
+	}
+	taskTimeout := time.Duration(job.Limits.TimeoutMillis)*time.Millisecond + 5*time.Second
+	if taskTimeout > configured {
+		return taskTimeout
+	}
+	return configured
 }

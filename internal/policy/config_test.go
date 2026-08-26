@@ -10,14 +10,15 @@ func boolPtr(v bool) *bool  { return &v }
 func intPtr(v int64) *int64 { return &v }
 
 func TestParseDocumentStrictValidation(t *testing.T) {
-	d, err := ParseDocument([]byte(`{"version":"v1","allow_write":false,"max_read_bytes":100,"denied_names":["secret.txt"]}`))
-	if err != nil || d.Version != "v1" || d.MaxReadBytes == nil || *d.MaxReadBytes != 100 {
+	d, err := ParseDocument([]byte(`{"version":"v1","allow_write":false,"max_read_bytes":100,"max_scan_bytes":1000,"denied_names":["secret.txt"]}`))
+	if err != nil || d.Version != "v1" || d.MaxReadBytes == nil || *d.MaxReadBytes != 100 || d.MaxScanBytes == nil || *d.MaxScanBytes != 1000 {
 		t.Fatalf("parse %+v: %v", d, err)
 	}
 	for _, input := range []string{
 		`{}`,
 		`{"version":"v1","unknown":true}`,
 		`{"version":"v1","max_read_bytes":0}`,
+		`{"version":"v1","max_scan_bytes":0}`,
 		`{"version":"v1","denied_names":["a/b"]}`,
 		`{"version":"v1"} trailing`,
 		`{"version":"v1"}{"version":"v2"}`,
@@ -29,13 +30,13 @@ func TestParseDocumentStrictValidation(t *testing.T) {
 }
 
 func TestRestrictCannotLoosen(t *testing.T) {
-	base := Config{AllowWrite: false, MaxReadBytes: 100, MaxWriteBytes: 50, DeniedNames: []string{"base-secret"}}
-	looser := Restrict(base, Document{Version: "loose", AllowWrite: boolPtr(true), MaxReadBytes: intPtr(1000), MaxWriteBytes: intPtr(500)})
-	if looser.AllowWrite || looser.MaxReadBytes != 100 || looser.MaxWriteBytes != 50 {
+	base := Config{AllowWrite: false, MaxReadBytes: 100, MaxScanBytes: 1000, MaxWriteBytes: 50, DeniedNames: []string{"base-secret"}}
+	looser := Restrict(base, Document{Version: "loose", AllowWrite: boolPtr(true), MaxReadBytes: intPtr(1000), MaxScanBytes: intPtr(10000), MaxWriteBytes: intPtr(500)})
+	if looser.AllowWrite || looser.MaxReadBytes != 100 || looser.MaxScanBytes != 1000 || looser.MaxWriteBytes != 50 {
 		t.Fatalf("policy was loosened: %+v", looser)
 	}
-	tighter := Restrict(Config{AllowWrite: true, MaxReadBytes: 100, MaxWriteBytes: 50}, Document{Version: "tight", AllowWrite: boolPtr(false), MaxReadBytes: intPtr(10), DeniedNames: []string{"extra-secret", "EXTRA-SECRET"}})
-	if tighter.AllowWrite || tighter.MaxReadBytes != 10 || len(tighter.DeniedNames) != 1 {
+	tighter := Restrict(Config{AllowWrite: true, MaxReadBytes: 100, MaxScanBytes: 1000, MaxWriteBytes: 50}, Document{Version: "tight", AllowWrite: boolPtr(false), MaxReadBytes: intPtr(10), MaxScanBytes: intPtr(100), DeniedNames: []string{"extra-secret", "EXTRA-SECRET"}})
+	if tighter.AllowWrite || tighter.MaxReadBytes != 10 || tighter.MaxScanBytes != 100 || len(tighter.DeniedNames) != 1 {
 		t.Fatalf("policy was not tightened: %+v", tighter)
 	}
 }

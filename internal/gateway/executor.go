@@ -75,6 +75,11 @@ type FileExecutor interface {
 	WriteFile(path string, data []byte, expected string, max int64) (string, error)
 }
 
+type detailedScanExecutor interface {
+	GlobScan(path, pattern string, maxFiles, maxResults int) (workspace.GlobScanResult, error)
+	GrepScan(path, query string, maxFiles, maxResults int, maxBytes int64) (workspace.GrepScanResult, error)
+}
+
 type legacyExecutor struct{ fs FileExecutor }
 
 func adaptExecutor(value any) (ContextExecutor, error) {
@@ -151,9 +156,27 @@ func (e legacyExecutor) Execute(ctx context.Context, request fileworker.Request)
 		info, err = e.fs.Info(request.Path)
 		response.Info = &info
 	case "glob":
-		response.Paths, err = e.fs.Glob(request.Path, request.Pattern, request.MaxFiles, request.MaxResults)
+		if scanner, ok := e.fs.(detailedScanExecutor); ok {
+			var result workspace.GlobScanResult
+			result, err = scanner.GlobScan(request.Path, request.Pattern, request.MaxFiles, request.MaxResults)
+			response.Paths, response.Scan = result.Paths, &result.Scan
+		} else {
+			response.Paths, err = e.fs.Glob(request.Path, request.Pattern, request.MaxFiles, request.MaxResults)
+			if err == nil {
+				response.Scan = &workspace.ScanStats{Complete: true, FilesScanned: len(response.Paths)}
+			}
+		}
 	case "grep":
-		response.Matches, err = e.fs.Grep(request.Path, request.Query, request.MaxFiles, request.MaxResults, request.MaxBytes)
+		if scanner, ok := e.fs.(detailedScanExecutor); ok {
+			var result workspace.GrepScanResult
+			result, err = scanner.GrepScan(request.Path, request.Query, request.MaxFiles, request.MaxResults, request.MaxBytes)
+			response.Matches, response.Scan = result.Matches, &result.Scan
+		} else {
+			response.Matches, err = e.fs.Grep(request.Path, request.Query, request.MaxFiles, request.MaxResults, request.MaxBytes)
+			if err == nil {
+				response.Scan = &workspace.ScanStats{Complete: true}
+			}
+		}
 	case "write_file":
 		response.Checksum, err = e.fs.WriteFile(request.Path, request.Data, request.ExpectedHash, request.MaxBytes)
 	case "diff":

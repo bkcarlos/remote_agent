@@ -25,7 +25,7 @@ func TestPolicy(t *testing.T) {
 }
 func TestLimitsDefault(t *testing.T) {
 	p := New(Config{})
-	if p.MaxReadBytes() <= 0 || p.MaxWriteBytes() <= 0 {
-		t.Fatal("invalid defaults")
+	if p.MaxReadBytes() != 1<<20 || p.MaxScanBytes() != 64<<20 || p.MaxWriteBytes() != 1<<20 {
+		t.Fatalf("invalid defaults: read=%d scan=%d write=%d", p.MaxReadBytes(), p.MaxScanBytes(), p.MaxWriteBytes())
 	}
 }

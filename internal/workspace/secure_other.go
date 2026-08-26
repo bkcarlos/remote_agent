@@ -124,7 +124,7 @@ func secureWalkFilesWithDepth(root, rel string, denied map[string]bool, maxFiles
 				continue
 			}
 			if depth+1 > maxDepth {
-				return ErrLimitExceeded
+				return errTraversalDepthLimit
 			}
 			if isDir {
 				child, openErr := openCheckedDirectory(root, entryPath)
@@ -140,7 +140,7 @@ func secureWalkFilesWithDepth(root, rel string, denied map[string]bool, maxFiles
 			}
 			count++
 			if count > maxFiles {
-				return ErrLimitExceeded
+				return errTraversalFileLimit
 			}
 			if visitErr := visit(entryPath); visitErr != nil {
 				return visitErr

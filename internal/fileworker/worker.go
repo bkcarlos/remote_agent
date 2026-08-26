@@ -108,29 +108,30 @@ const (
 )
 
 type Response struct {
-	TokenID    string              `json:"token_id,omitempty"`
-	WorkerID   string              `json:"worker_id,omitempty"`
-	Content    string              `json:"content,omitempty"`
-	Base64     string              `json:"base64,omitempty"`
-	MIMEType   string              `json:"mime_type,omitempty"`
-	Bytes      int                 `json:"bytes,omitempty"`
-	Width      int                 `json:"width,omitempty"`
-	Height     int                 `json:"height,omitempty"`
-	StartLine  int                 `json:"start_line"`
-	EndLine    int                 `json:"end_line"`
-	TotalLines int                 `json:"total_lines"`
-	Truncated  bool                `json:"truncated"`
-	Metadata   *TextMetadata       `json:"metadata,omitempty"`
-	Entries    []string            `json:"entries,omitempty"`
-	Checksum   string              `json:"sha256,omitempty"`
-	Info       *workspace.FileInfo `json:"info,omitempty"`
-	Matches    []workspace.Match   `json:"matches,omitempty"`
-	Paths      []string            `json:"paths,omitempty"`
-	Files      []FileResult        `json:"files,omitempty"`
-	Diff       string              `json:"diff,omitempty"`
-	Error      string              `json:"error,omitempty"`
-	ErrorKind  ErrorKind           `json:"error_kind,omitempty"`
-	RolledBack bool                `json:"rolled_back,omitempty"`
+	TokenID    string               `json:"token_id,omitempty"`
+	WorkerID   string               `json:"worker_id,omitempty"`
+	Content    string               `json:"content,omitempty"`
+	Base64     string               `json:"base64,omitempty"`
+	MIMEType   string               `json:"mime_type,omitempty"`
+	Bytes      int                  `json:"bytes,omitempty"`
+	Width      int                  `json:"width,omitempty"`
+	Height     int                  `json:"height,omitempty"`
+	StartLine  int                  `json:"start_line"`
+	EndLine    int                  `json:"end_line"`
+	TotalLines int                  `json:"total_lines"`
+	Truncated  bool                 `json:"truncated"`
+	Metadata   *TextMetadata        `json:"metadata,omitempty"`
+	Entries    []string             `json:"entries,omitempty"`
+	Checksum   string               `json:"sha256,omitempty"`
+	Info       *workspace.FileInfo  `json:"info,omitempty"`
+	Matches    []workspace.Match    `json:"matches,omitempty"`
+	Paths      []string             `json:"paths,omitempty"`
+	Scan       *workspace.ScanStats `json:"scan,omitempty"`
+	Files      []FileResult         `json:"files,omitempty"`
+	Diff       string               `json:"diff,omitempty"`
+	Error      string               `json:"error,omitempty"`
+	ErrorKind  ErrorKind            `json:"error_kind,omitempty"`
+	RolledBack bool                 `json:"rolled_back,omitempty"`
 }
 
 // ErrorKindFor returns the stable, path-free category carried across the
@@ -204,6 +205,8 @@ type workspaceFileSystem interface {
 	Info(string) (workspace.FileInfo, error)
 	Glob(string, string, int, int) ([]string, error)
 	Grep(string, string, int, int, int64) ([]workspace.Match, error)
+	GlobScan(string, string, int, int) (workspace.GlobScanResult, error)
+	GrepScan(string, string, int, int, int64) (workspace.GrepScanResult, error)
 	WriteFile(string, []byte, string, int64) (string, error)
 }
 
@@ -334,17 +337,17 @@ func (s *Service) executeAuthorized(job Job) Response {
 		}
 		return Response{Info: &info}
 	case "glob":
-		paths, err := s.fs.Glob(job.Path, job.Pattern, job.MaxFiles, job.MaxResults)
+		result, err := s.fs.GlobScan(job.Path, job.Pattern, job.MaxFiles, job.MaxResults)
 		if err != nil {
 			return errorResponse(err)
 		}
-		return Response{Paths: paths}
+		return Response{Paths: result.Paths, Scan: &result.Scan}
 	case "grep":
-		matches, err := s.fs.Grep(job.Path, job.Query, job.MaxFiles, job.MaxResults, job.MaxBytes)
+		result, err := s.fs.GrepScan(job.Path, job.Query, job.MaxFiles, job.MaxResults, job.MaxBytes)
 		if err != nil {
 			return errorResponse(err)
 		}
-		return Response{Matches: matches}
+		return Response{Matches: result.Matches, Scan: &result.Scan}
 	case "diff":
 		return s.diff(job)
 	case "edit", "multi_edit":

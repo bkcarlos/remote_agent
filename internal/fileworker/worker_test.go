@@ -329,14 +329,14 @@ func TestServiceOperationsAndReplay(t *testing.T) {
 	glob := signedJob(t, signer, "glob", ".", func(job *Job) {
 		job.Pattern, job.MaxFiles, job.MaxResults = "*.txt", 10, 10
 	})
-	if response := service.Execute(glob); response.Error != "" || len(response.Paths) != 1 {
+	if response := service.Execute(glob); response.Error != "" || len(response.Paths) != 1 || response.Scan == nil || !response.Scan.Complete || response.Scan.FilesScanned != 1 {
 		t.Fatalf("glob: %+v", response)
 	}
 
 	grep := signedJob(t, signer, "grep", ".", func(job *Job) {
 		job.Query, job.MaxFiles, job.MaxResults, job.MaxBytes = "hell", 10, 10, 100
 	})
-	if response := service.Execute(grep); response.Error != "" || len(response.Matches) != 1 {
+	if response := service.Execute(grep); response.Error != "" || len(response.Matches) != 1 || response.Scan == nil || !response.Scan.Complete || response.Scan.FilesScanned != 1 || response.Scan.BytesScanned != 5 {
 		t.Fatalf("grep: %+v", response)
 	}
 
@@ -1138,7 +1138,7 @@ func TestProcessExecutorEndToEnd(t *testing.T) {
 		t.Fatalf("glob %v: %v", glob.Paths, err)
 	}
 	grep, err := executor.Execute(ctx, Request{Operation: "grep", Path: ".", Query: "change", MaxFiles: 10, MaxResults: 10, MaxBytes: 100})
-	if err != nil || len(grep.Matches) != 1 {
-		t.Fatalf("grep %+v: %v", grep.Matches, err)
+	if err != nil || len(grep.Matches) != 1 || grep.Scan == nil || !grep.Scan.Complete {
+		t.Fatalf("grep %+v: %v", grep, err)
 	}
 }

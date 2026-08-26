@@ -17,6 +17,9 @@ var (
 	ErrInvalidPattern  = errors.New("invalid workspace pattern")
 	ErrConflict        = errors.New("workspace entry changed during operation")
 	ErrIO              = errors.New("workspace operation failed")
+
+	errTraversalFileLimit  = errors.Join(ErrLimitExceeded, errors.New("workspace traversal file limit exceeded"))
+	errTraversalDepthLimit = errors.Join(ErrLimitExceeded, errors.New("workspace traversal depth limit exceeded"))
 )
 
 // SafeError is returned by exported workspace operations. It deliberately keeps

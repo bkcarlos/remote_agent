@@ -1217,8 +1217,10 @@ func (s *Server) validateAndNormalize(spec toolSpec, arguments *toolArguments) e
 func (s *Server) workerRequest(operation string, arguments toolArguments) fileworker.Request {
 	request := fileworker.Request{Operation: operation, Path: arguments.Path, Paths: arguments.Paths, StartLine: arguments.StartLine, EndLine: arguments.EndLine, Pattern: arguments.Pattern, Query: arguments.Query, ExpectedHash: arguments.ExpectedHash, Edits: arguments.Edits, Files: arguments.Files, Apply: arguments.Apply}
 	switch operation {
-	case "read_file", "multi_read", "grep", "diff":
+	case "read_file", "multi_read", "diff":
 		request.MaxBytes = s.policy.MaxReadBytes()
+	case "grep":
+		request.MaxBytes = s.policy.MaxScanBytes()
 	case "read_image":
 		request.MaxBytes = min64(s.policy.MaxReadBytes(), fileworker.MaxImageBytes)
 	case "edit", "multi_edit", "write_file":
@@ -1293,9 +1295,9 @@ func publicResult(operation string, result fileworker.Response) any {
 	case "file_info":
 		identity["info"] = result.Info
 	case "glob":
-		identity["paths"] = result.Paths
+		identity["paths"], identity["scan"] = result.Paths, result.Scan
 	case "grep":
-		identity["matches"] = result.Matches
+		identity["matches"], identity["scan"] = result.Matches, result.Scan
 	case "diff":
 		identity["diff"] = result.Diff
 		identity["files"] = result.Files

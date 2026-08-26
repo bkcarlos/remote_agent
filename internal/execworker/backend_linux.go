@@ -152,7 +152,7 @@ func (b *linuxBackend) launch(job Job, profile TaskProfile, root string) (*proce
 	spec := childSpec{
 		Executable: profile.Executable, Argv: append(append([]string(nil), profile.FixedArgv...), job.Argv...),
 		Env: cloneEnv(job.Env), Workspace: root, WorkspaceMode: profile.WorkspaceMode,
-		Limits: job.Limits, Production: b.config.Production,
+		CachePaths: append([]string(nil), profile.CachePaths...), Limits: job.Limits, Production: b.config.Production,
 	}
 	reader, writer, err := os.Pipe()
 	if err != nil {

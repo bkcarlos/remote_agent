@@ -77,6 +77,7 @@ type TaskProfile struct {
 	AllowedArgvPrefixes [][]string    `json:"allowed_argv_prefixes,omitempty"`
 	WorkspaceMode       WorkspaceMode `json:"workspace_mode"`
 	EnvAllowlist        []string      `json:"env_allowlist,omitempty"`
+	CachePaths          []string      `json:"cache_paths,omitempty"`
 	Limits              Limits        `json:"limits"`
 }
 
@@ -120,6 +121,37 @@ func (p TaskProfile) Validate() error {
 		}
 		seen[name] = struct{}{}
 	}
+	if len(p.CachePaths) > 16 {
+		return errors.New("profile cache path count exceeds 16")
+	}
+	seenPaths := make(map[string]struct{}, len(p.CachePaths))
+	for _, cachePath := range p.CachePaths {
+		if err := validateCachePath(cachePath); err != nil {
+			return err
+		}
+		clean := filepath.Clean(cachePath)
+		if _, exists := seenPaths[clean]; exists {
+			return errors.New("profile cache paths must be unique")
+		}
+		seenPaths[clean] = struct{}{}
+	}
+	return nil
+}
+
+func validateCachePath(value string) error {
+	if value == "" || strings.IndexByte(value, 0) >= 0 || !filepath.IsAbs(value) || filepath.Clean(value) != value {
+		return errors.New("profile cache paths must be clean absolute paths")
+	}
+	if value == string(filepath.Separator) {
+		return errors.New("profile cache path cannot grant filesystem root")
+	}
+	if filepath.Separator == '/' {
+		for _, denied := range []string{"/proc", "/sys", "/dev", "/run", "/var/run"} {
+			if value == denied || strings.HasPrefix(value, denied+"/") {
+				return errors.New("profile cache path targets a container-sensitive filesystem tree")
+			}
+		}
+	}
 	return nil
 }
 
@@ -156,6 +188,8 @@ func (p TaskProfile) Digest() (string, error) {
 	canonical.FixedArgv = append([]string(nil), p.FixedArgv...)
 	canonical.EnvAllowlist = append([]string(nil), p.EnvAllowlist...)
 	sort.Strings(canonical.EnvAllowlist)
+	canonical.CachePaths = append([]string(nil), p.CachePaths...)
+	sort.Strings(canonical.CachePaths)
 	canonical.AllowedArgvPrefixes = clonePrefixes(p.AllowedArgvPrefixes)
 	sort.Slice(canonical.AllowedArgvPrefixes, func(i, j int) bool {
 		left, _ := json.Marshal(canonical.AllowedArgvPrefixes[i])
