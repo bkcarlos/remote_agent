@@ -20,6 +20,13 @@ func testExecutablePath() string {
 	return "/usr/bin/go"
 }
 
+func testCachePaths() (string, string) {
+	if runtime.GOOS == "windows" {
+		return `C:\cache-a`, `C:\cache-b`
+	}
+	return "/tmp/cache-a", "/tmp/cache-b"
+}
+
 func testProfile() TaskProfile {
 	return TaskProfile{
 		Name: "go-test", Executable: testExecutablePath(), FixedArgv: []string{"test"},
@@ -53,8 +60,9 @@ func TestTaskProfileRejectsArbitraryInputs(t *testing.T) {
 func TestTaskProfileDigestIsCanonical(t *testing.T) {
 	left := testProfile()
 	right := testProfile()
-	left.CachePaths = []string{"/tmp/cache-b", "/tmp/cache-a"}
-	right.CachePaths = []string{"/tmp/cache-a", "/tmp/cache-b"}
+	cacheA, cacheB := testCachePaths()
+	left.CachePaths = []string{cacheB, cacheA}
+	right.CachePaths = []string{cacheA, cacheB}
 	right.EnvAllowlist = []string{"GOCACHE", "GOFLAGS"}
 	right.AllowedArgvPrefixes = [][]string{{"-run"}, {"./..."}}
 	leftDigest, err := left.Digest()
